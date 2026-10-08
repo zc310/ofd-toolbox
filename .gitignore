@@ -1,33 +1,17 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# 构建产物。wasm 由 make build-wasm 生成，不入库。
+cmd/toolbox-wasm/web/toolbox.wasm
+cmd/toolbox-wasm/web/wasm_exec.js
+# service-worker.js 是生成物：模板是 service-worker.template.js。
+# 之前这条只有注释、规则行漏了，结果生成物被提交入库，缓存名会和模板漂移。
+cmd/toolbox-wasm/web/service-worker.js
 
-# Test binary, built with `go test -c`
-*.test
+# 测试数据由 make testdata 生成。样本本身来自 ofd 仓库的 testdata，
+# 不重复入库；改测试逻辑时重跑 make testdata 即可。
+testdata/
 
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-!coverage.go
-*.coverprofile
-profile.cov
+# 浏览器测试的依赖
+browser-test/node_modules/
+browser-test/package-lock.json
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-go.work.sum
-
-# env file
-.env
-
-# Editor/IDE
-# .idea/
-# .vscode/
+# 编辑器
+.idea/

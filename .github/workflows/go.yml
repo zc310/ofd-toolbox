@@ -1,0 +1,70 @@
+# 持续集成：依赖校验、静态检查与构建。
+#
+# 与 pages.yml 的分工：这里只验证，不发布，因此不装 binaryen、不做 wasm-opt
+# ——未优化的 WASM 足够证明能编译，而 Pages 那条要发布的才是优化过的产物。
+# 发布走 pages.yml，只在 main 分支的特定路径变化时触发。
+#
+# 当前版本不提交测试代码（cmd/toolbox-wasm/web/test/ 与 browser-test/ 均未入库），
+# 所以这里不跑 make test：那个目标指向未入库的文件，在干净检出的仓库里必然
+# 报"找不到 *.test.mjs"。测试代码入库后，把下面 Test 那一步加回来即可。
+name: Go
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ofd-toolbox
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ofd-toolbox
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+          cache-dependency-path: ofd-toolbox/go.sum
+
+      # ofd 是普通的线上依赖（go.mod 里没有 replace），因此不需要额外签出
+      # 仓库——Go 自己从模块代理取。
+      #
+      # tidy 之后 diff 一遍：go.sum 漏条目会在后面的构建里报 "missing go.sum
+      # entry"，那种错很难一眼看出是锁文件缺东西。这里直接把漂移变成一步失败。
+      - name: Tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || {
+            echo "::error::go.mod / go.sum 与 go mod tidy 的结果不一致，请把 tidy 后的内容提交"
+            exit 1
+          }
+
+      # 不用 go build ./... 一步带过：本项目只有 js/wasm 一套实现，
+      # cmd/toolbox-wasm 下每个文件都带 //go:build js && wasm，宿主机下匹配不到包。
+      # 仓库里没有宿主目标的包，所以只在 GOOS=js 下查。
+      - name: Vet
+        run: GOOS=js GOARCH=wasm go vet ./...
+
+      - name: Build
+        run: CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/toolbox-wasm
+
+      # 走一遍真实的构建路径，顺带把 wasm_exec.js 拷到 web/ 下、按内容哈希
+      # 生成 service-worker.js。这一步能抓到前面 go build 抓不到的问题：
+      # Makefile 里的 WASM_OPT_FLAGS 与 wasm-opt 版本不匹配之类。
+      # 本机没装 wasm-opt 时它会告警并改用未优化版本，那不算失败。
+      - name: Build WASM
+        run: make build-wasm

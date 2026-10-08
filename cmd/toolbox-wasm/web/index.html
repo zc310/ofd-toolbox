@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OFD 工具箱</title>
+<meta name="description" content="在浏览器里转换与检查 OFD 文档：OFD 与 PDF 互转、格式导出、文档校验、结构分析、发票抽取、水印、合并与长期保存。全部在本地完成，文件不上传。">
+<link rel="stylesheet" href="toolbox.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2476bd">
+<!-- favicon-32.png 是纯文档图形：不带 OFD 字标，32px 下三个字母会糊成灰块。 -->
+<link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+
+<!-- 启动遮罩：WASM 有 50MB 量级，必须明确告诉用户在下载什么、多大、到哪一步了。 -->
+<div id="boot" class="boot">
+  <div class="boot-card">
+    <div class="boot-title">OFD 工具箱</div>
+    <div class="boot-note">正在载入文档处理引擎</div>
+    <div class="boot-track"><div id="boot-fill" class="boot-fill"></div></div>
+    <div id="boot-status" class="boot-status">准备中…</div>
+    <div id="boot-error" class="boot-error" hidden></div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">OFD 工具箱</div>
+  <nav id="tabs" class="tabs" role="tablist" aria-label="工具">
+    <button class="tab is-active" role="tab" data-tab="convert" aria-selected="true">转换</button>
+    <button class="tab" role="tab" data-tab="validate" aria-selected="false">校验</button>
+    <button class="tab" role="tab" data-tab="analyze" aria-selected="false">分析</button>
+    <button class="tab" role="tab" data-tab="invoice" aria-selected="false">发票</button>
+    <button class="tab" role="tab" data-tab="watermark" aria-selected="false">水印</button>
+    <button class="tab" role="tab" data-tab="merge" aria-selected="false">合并</button>
+    <button class="tab" role="tab" data-tab="preserve" aria-selected="false">长期保存</button>
+  </nav>
+  <div class="topbar-tail">
+    <button id="font-button" class="ghost" type="button" title="字体回退">字体</button>
+    <button id="memory-button" class="ghost" type="button" title="内存占用">内存</button>
+    <button id="about-button" class="ghost" type="button" title="关于本工具">关于</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- 文件区：所有工具共用一次载入，切换工具不重复选文件。 -->
+  <section class="files" aria-label="文件">
+    <div id="dropzone" class="dropzone" tabindex="0" role="button"
+         aria-label="选择或拖放文件">
+      <strong>拖放文件到这里</strong>
+      <span>或点击选择 · 支持 OFD、PDF、PNG、JPG、TIFF、Markdown</span>
+      <input id="file-input" type="file" multiple hidden>
+    </div>
+    <ul id="file-list" class="file-list"></ul>
+    <p id="file-empty" class="hint">尚未载入文件。文件不会离开这台设备。</p>
+  </section>
+
+  <!-- 工作区：内容随工具切换。 -->
+  <section class="work" id="work" aria-live="polite">
+
+    <!-- 转换 -->
+    <div class="panel is-active" data-panel="convert">
+      <div class="work-head">
+        <h2>格式转换</h2>
+        <p id="convert-source" class="work-note">载入文件后可选择目标格式。</p>
+      </div>
+
+      <div id="format-grid" class="format-grid" role="radiogroup" aria-label="目标格式"></div>
+
+      <div id="unsupported-note" class="notice" hidden></div>
+
+      <div class="work-split">
+        <div class="work-main">
+          <!-- 缺字提示单独一行：放进 .preview-strip 会被当成 flex 子项，
+               和缩略图排在同一行，看着像某张图的说明。 -->
+          <div id="preview-warning" class="preview-warning"></div>
+          <div id="preview-strip" class="preview-strip" aria-label="页面预览"></div>
+        </div>
+        <aside id="options" class="options" aria-label="转换参数"></aside>
+      </div>
+
+      <div id="result-panel" class="result" hidden></div>
+    </div>
+
+    <!-- 校验 -->
+    <div class="panel" data-panel="validate">
+      <div class="work-head">
+        <h2>文档校验</h2>
+        <p class="work-note">按 GB/T 33190 与 OFD Schema 检查包结构、XML、引用与签名摘要。</p>
+      </div>
+      <div id="validate" class="tool-body">
+        <p class="hint">载入 OFD 后点击「开始校验」。</p>
+      </div>
+    </div>
+
+    <!-- 分析 -->
+    <div class="panel" data-panel="analyze">
+      <div class="work-head">
+        <h2>结构分析</h2>
+        <p class="work-note">文档结构、资源统计与签名详情。</p>
+      </div>
+      <div id="analyze" class="tool-body">
+        <p class="hint">载入 OFD 后点击「开始分析」。</p>
+      </div>
+    </div>
+
+    <!-- 发票 -->
+    <div class="panel" data-panel="invoice">
+      <div class="work-head">
+        <h2>发票抽取</h2>
+        <p class="work-note">从增值税电子发票 OFD 读取结构化发票信息。</p>
+      </div>
+      <div id="invoice" class="tool-body">
+        <p class="hint">载入发票 OFD 后点击「开始抽取」。</p>
+      </div>
+    </div>
+
+    <!-- 水印 -->
+    <div class="panel" data-panel="watermark">
+      <div class="work-head">
+        <h2>水印</h2>
+        <p class="work-note">添加、替换或删除页面水印注解。</p>
+      </div>
+      <div id="watermark" class="tool-body">
+        <p class="hint">载入 OFD 后点击「添加水印」。</p>
+      </div>
+    </div>
+
+    <!-- 合并 -->
+    <div class="panel" data-panel="merge">
+      <div class="work-head">
+        <h2>文档合并</h2>
+        <p class="work-note">把两个以上 OFD 合并：整体合并产出多文档包，拼页产出单文档。</p>
+      </div>
+      <div id="merge" class="tool-body">
+        <p class="hint">把两个以上 OFD 加入文件队列后点击「开始合并」。</p>
+      </div>
+    </div>
+
+    <!-- 长期保存 -->
+    <div class="panel" data-panel="preserve">
+      <div class="work-head">
+        <h2>长期保存处理</h2>
+        <p class="work-note">按 GB/T 42133 第 6 章处理。先预检，确认改动后再执行。</p>
+      </div>
+      <div id="preserve" class="tool-body">
+        <p class="hint">载入 OFD 后点击「开始预检」。</p>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<!-- 任务条：进度、取消与产物下载。 -->
+<footer id="taskbar" class="taskbar" hidden>
+  <div class="task-text">
+    <span id="task-label">就绪</span>
+    <span id="task-detail" class="task-detail"></span>
+  </div>
+  <div class="task-track"><div id="task-fill" class="task-fill"></div></div>
+  <div class="task-actions">
+    <button id="task-cancel" class="ghost" type="button">取消</button>
+    <button id="task-download" class="primary" type="button" hidden>下载</button>
+  </div>
+</footer>
+
+<!-- 内存诊断：WASM 线性内存只增不减，大文档必须能看到占用。 -->
+<aside id="memory-panel" class="memory" hidden>
+  <div class="memory-head">
+    <strong>内存占用</strong>
+    <button id="memory-close" class="ghost" type="button">关闭</button>
+  </div>
+  <dl id="memory-body" class="memory-body"></dl>
+  <div class="memory-actions">
+    <button id="memory-refresh" class="ghost" type="button">刷新</button>
+    <button id="memory-gc" class="ghost" type="button">强制回收</button>
+  </div>
+  <p class="hint">线性内存只会增长，回收只会让空闲页可复用。数值偏大不等于泄漏。</p>
+</aside>
+
+<!-- 字体回退：浏览器里没有系统字体，OFD 未内嵌字体时要用本机字体兜底。 -->
+<aside id="font-panel" class="memory font-panel" hidden>
+  <div class="memory-head">
+    <strong>字体</strong>
+    <button id="font-close" class="ghost" type="button">关闭</button>
+  </div>
+  <!-- 操作与候选放前面，文档字体表放在后面：表只是背景信息，
+       放在前面会把「注册所选」推到面板底部，得拖滚动条才点得到。 -->
+  <div class="memory-actions">
+    <button id="font-local" class="ghost" type="button">选择本机字体</button>
+    <button id="font-upload" class="ghost" type="button">上传字体文件</button>
+    <input id="font-input" type="file" accept=".ttf,.ttc,.otf,font/ttf,font/otf,font/collection" multiple hidden>
+  </div>
+  <!-- 候选与已注册是两个列表：共用一个宿主时后画的会把先画的顶掉，
+       注册完候选列表就没了，想再补一个只能重新读一遍。 -->
+  <div id="font-candidates" class="font-list"></div>
+  <div id="font-list" class="font-list"></div>
+  <div id="font-doc" class="font-doc"></div>
+  <p class="hint">浏览器里没有系统字体，文档声明的字体（如宋体、黑体）如果
+     没有内嵌文件就画不出来，预览会是空白或方块。注册一份中文字体即可让所有
+     缺字体的文字正常显示。</p>
+</aside>
+
+<!-- 大图查看：预览缩略图点开看原尺寸，省得为了看清一个字去重新走一遍导出。 -->
+<dialog id="image-viewer" class="dialog image-viewer">
+  <div class="image-viewer-head">
+    <strong id="image-viewer-caption">预览</strong>
+    <button id="image-viewer-close" class="ghost" type="button">关闭</button>
+  </div>
+  <img id="image-viewer-img" alt="预览大图">
+</dialog>
+
+<dialog id="about-dialog" class="dialog">
+  <h2>关于 OFD 工具箱</h2>
+  <p>全部处理在本机浏览器内完成，文件不会上传到任何服务器。</p>
+  <p>基于 <a href="https://github.com/zc310/ofd" target="_blank" rel="noopener noreferrer">zc310/ofd</a>
+     构建的 WebAssembly 引擎，支持 OFD 与 PDF 互转、图像与文本导出、文档校验、
+     结构分析、发票抽取、水印、合并与长期保存处理。</p>
+  <p class="warn">本工具不保证解析或转换结果适用于特定业务、法律与合规场景。
+     电子签名的有效性需要用 OFD 阅读器另行核验。</p>
+  <p>纯浏览器环境无法运行 LibreOffice、Chrome 与 Tesseract，
+     因此 Office 文档与 HTML 转换、OCR 不在支持范围内。</p>
+
+  <!-- 公众号推广：放「关于」里而不是常驻页面。工具类应用每屏都挂一张
+       营销图很打扰。
+       二维码单独裁出来显示，而不是整张联合物料：整张里二维码只占宽度的
+       22%，铺满对话框也只有约 90 CSS px（≈2.4cm），手机上更小，扫不动。
+       裁出来固定 150px，在手机和桌面上都能扫。 -->
+  <div class="about-promo">
+    <img class="about-promo-qr" src="wechat-qr.png" width="480" height="480"
+         alt="微信公众号「慧算研析」二维码">
+    <div class="about-promo-body">
+      <p class="about-promo-title">微信公众号「慧算研析」</p>
+      <img class="about-promo-search" src="wechat-search.png" width="960" height="163"
+           alt="微信搜一搜：慧算研析">
+      <p class="about-promo-note">微信扫码，或在微信里搜一搜「慧算研析」。</p>
+    </div>
+  </div>
+
+  <form method="dialog"><button class="primary">知道了</button></form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
