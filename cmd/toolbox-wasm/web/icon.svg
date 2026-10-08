@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="OFD 工具箱">
+  <!--
+    OFD 工具箱图标。
+
+    设计取舍：三个信号——"文档"（OFD 是版式文档）、"扳手"（工具箱）、右下角
+    的 "OFD" 字标。字标是有意加的：安装到桌面/主屏后，图标会脱离启动器里的
+    应用名单独出现，"OFD" 这三个字母是唯一能自证身份的东西。
+
+    代价要认：favicon-32.png 上字母只有约 5px 高，实际读不出来，那一枚退化成
+    纯图形看即可。字标用系统无衬线粗体而不是内嵌字体（和 `app.js` 里字体候选
+    一样不上网），所以不同机器重新渲染会有细微差别；已生成的 PNG 已入库，
+    日常不会重渲染。
+
+    布局上为了给右下角腾位置：文档整体上收并收窄，内容线从 y=196/246/296 提到
+    y=180/228/276；扳手徽章从右下挪到左下，字标右对齐放在徽章右侧。
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a8fd6"/>
+      <stop offset="1" stop-color="#1b5c94"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <!-- 底色。clip-path 挂在 rect 自己身上而不是外层 g，是为了让 maskable 变体能
+       直接摘掉这一个属性：那一版要满幅铺色，圆角与透明角都交给系统遮罩处理。
+       见 browser-test/render-icons.mjs。 -->
+  <rect width="512" height="512" fill="url(#bg)" clip-path="url(#tile)"/>
+
+  <!--
+    主体：文档 + 内容线 + 字标 + 工具徽章。
+
+    外层 g 的 id 是给 browser-test/render-icons.mjs 用的——它要拿这一组拼出
+    PWA 的各变体：favicon 摘掉字标与徽章，maskable 版本给它加缩放平移把内容
+    收进安全区。改布局时留意那个脚本的取用方式。
+  -->
+  <g id="art">
+  <!-- 文档：右上角折角，位置比常规图标上提，给底部徽章与字标留白 -->
+  <path d="M 150 78 h 146 l 54 54 v 214 a 26 26 0 0 1 -26 26 h -174 a 26 26 0 0 1 -26 -26 v -242 a 26 26 0 0 1 26 -26 z"
+        fill="#ffffff"/>
+  <path d="M 296 78 l 54 54 h -54 z" fill="#c9dff2"/>
+
+  <!-- 文档内容线：整体上收，第三条缩短暗示"内容未完" -->
+  <g fill="#2f7cbf">
+    <rect x="176" y="180" width="148" height="22" rx="11"/>
+    <rect x="176" y="228" width="148" height="22" rx="11"/>
+    <rect x="176" y="276" width="92" height="22" rx="11"/>
+  </g>
+
+  <!-- 字标：右下角，右对齐到 x=436，给圆角留出边距 -->
+  <text id="wordmark" x="436" y="452" text-anchor="end" fill="#ffffff"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="86" font-weight="700" letter-spacing="2">OFD</text>
+
+  <!-- 工具徽章：白色圆底 + 蓝色开口扳手，放在左下。
+       外层 g 的 id 供 32px 那枚整体摘掉（见 browser-test/render-icons.mjs）。
+       内部 scale 0.6 是算出来的：手柄端点距心 100*0.6=60，加半个线宽 9，共 69，
+       刚好留在 r=78 的圆里并留出 9px 白边（再大就会溢出圆外）。 -->
+  <g id="badge">
+    <circle cx="140" cy="392" r="78" fill="#ffffff"/>
+    <g transform="translate(140 392) rotate(-42) scale(0.6)"
+       fill="none" stroke="#2476bd" stroke-width="30" stroke-linecap="round">
+      <!-- 开口钳头：缺口约 80°，朝左（旋转后朝左上） -->
+      <path d="M -47.5 -39.8 A 62 62 0 1 0 -47.5 39.8"/>
+      <!-- 手柄：比钳头长，比例才像扳手而不是"C 加一根棍" -->
+      <line x1="-10" y1="0" x2="100" y2="0"/>
+    </g>
+  </g>
+  </g>
+</svg>

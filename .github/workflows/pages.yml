@@ -1,0 +1,117 @@
+# 构建 WASM 工具箱并发布到 GitHub Pages。
+#
+# 页面放在站点根，访问地址：
+#   https://zc310.github.io/ofd-toolbox/
+#
+# 页面里所有资源都是相对路径（./app.js、importScripts('wasm_exec.js')、
+# Service Worker 也用相对路径注册且没写死 scope），所以整个 web/ 目录
+# 平铺到站点根即可，不用改任何代码。
+#
+# 当前版本不提交测试代码（cmd/toolbox-wasm/web/test/ 与 browser-test/ 均未入库），
+# 所以这里不跑 make test：那个目标指向未入库的文件，在干净检出的仓库里必然失败。
+# 测试代码入库后，在 Build WASM 之后补一步 make testdata 与 make test 即可。
+name: Pages
+
+on:
+  push:
+    branches: ["main"]
+    # 只在这些路径变化时重建：toolbox.wasm 有五十多兆，每次提交都重编太浪费。
+    #
+    # 依赖 ofd 是线上模块，改 ofd 不会触发本仓库部署——那属于 ofd 仓库自己的
+    # 流程。想让 ofd 侧改动带动这里，得在 ofd 仓库发 repository_dispatch，
+    # 这里没做。
+    paths:
+      - "cmd/toolbox-wasm/web/**"
+      - "cmd/toolbox-wasm/*.go"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/pages.yml"
+  # 手动触发用于验证 Pages 配置，不受 paths 限制。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一分支只保留最新一次部署：排队中的旧构建直接取消。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ofd-toolbox
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ofd-toolbox
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+          cache-dependency-path: ofd-toolbox/go.sum
+
+      # 用官方 release 的预编译 binaryen，不用 apt 的：noble 源里只有 108，
+      # 而 Makefile 的 WASM_OPT_FLAGS 含 --enable-bulk-memory-opt、
+      # --disable-strings、--disable-compact-imports，这三个 108 不认，
+      # wasm-opt 会报 "Unknown option" 直接退出。Makefile 那步虽然会兜底改用
+      # 未优化版本，但发布产物就不该是未优化的，所以这里装新版。
+      - name: Install binaryen
+        run: |
+          BINARYEN_VERSION=133
+          BASE="https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}"
+          FILE="binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          curl -sSL --fail --max-time 600 -o "/tmp/$FILE" "$BASE/$FILE"
+          curl -sSL --fail --max-time 60 -o "/tmp/$FILE.sha256" "$BASE/$FILE.sha256"
+          (cd /tmp && sha256sum -c "$FILE.sha256")
+          tar -xzf "/tmp/$FILE" -C /tmp
+          sudo install -m755 "/tmp/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt
+          # 选项与 Makefile 的 WASM_OPT_FLAGS 对齐，版本不够会在这一步暴露，
+          # 而不是等到 make build-wasm 才失败。
+          wasm-opt --enable-bulk-memory-opt --disable-strings --disable-compact-imports --version
+
+      # build-wasm 做三件事：编译 toolbox.wasm、按需跑 wasm_opt、从 GOROOT 复制
+      # wasm_exec.js，并按各资源内容哈希重算 service-worker.js 里的 CACHE_NAME。
+      # 缓存名一变，用户下次打开就是新版本；漏了这一步会一直用旧缓存。
+      - name: Build WASM
+        run: make build-wasm
+
+      # upload-pages-artifact 不支持排除项，先把要发布的文件挑到 _site。
+      # 只放 web/ 下的页面资源，仓库其余内容不进 Pages。
+      #
+      # service-worker.template.js 剔掉——页面上真正生效的是同目录下由模板
+      # 生成的 service-worker.js，模板是源码，留在仓库里就够。
+      # test/ 目录当前不在仓库里（测试代码未入库），这条 rm 是留给以后
+      # 测试代码入库后的：那是本地跑的脚本，页面上没有入口。
+      - name: Stage site
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/_site"
+          cp -a cmd/toolbox-wasm/web/. "$GITHUB_WORKSPACE/_site/"
+          rm -rf "$GITHUB_WORKSPACE/_site/test"
+          rm -f "$GITHUB_WORKSPACE/_site/service-worker.template.js"
+          echo "发布内容："
+          find "$GITHUB_WORKSPACE/_site" -type f | sed "s|$GITHUB_WORKSPACE/||" | sort
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
