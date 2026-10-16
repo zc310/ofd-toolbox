@@ -25,6 +25,16 @@
   </div>
 </div>
 
+<!-- 版本提示贴在顶栏之上并吸顶：新 SW 装好后页面不会自己换掉内存里的旧
+     WASM，得让用户点一下刷新，否则一直用的是上一版。 -->
+<div id="update-note" class="update-note" hidden>
+  <span id="update-text">已有新版本可用。</span>
+  <span class="update-note-actions">
+    <button id="update-reload" type="button">立即刷新</button>
+    <button id="update-dismiss" type="button" class="ghost">稍后</button>
+  </span>
+</div>
+
 <header class="topbar">
   <div class="brand">OFD 工具箱</div>
   <nav id="tabs" class="tabs" role="tablist" aria-label="工具">

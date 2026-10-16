@@ -3639,10 +3639,85 @@ function registerServiceWorker() {
       // 绕过 HTTP 缓存检查版本，发布后第一次导航就能发现新版本。
       // 不加的话浏览器会拿 HTTP 缓存里的旧脚本比对，白等一轮。
       updateViaCache: 'none',
+    }).then((registration) => {
+      watchServiceWorkerUpdates(registration);
     }).catch((error) => {
       console.warn('Service Worker 注册失败：', error);
     });
   });
+}
+
+/**
+ * hadServiceWorkerController 记录脚本运行时是否已有 SW 在控制本页面。
+ *
+ * SW 首次安装完成时会 claim 一次页面，那一次也触发 controllerchange——但那时
+ * 用户并没有在用旧版本，提示"有新版本"是假的。这个标记把那次排除掉。
+ */
+let hadServiceWorkerController =
+  Boolean(navigator.serviceWorker && navigator.serviceWorker.controller);
+
+/** reloadDismissed 记住用户是否点过"稍后"，同一次会话不再打扰。 */
+let reloadDismissed = false;
+
+/**
+ * showUpdateNotice 提示"已有新版本"。
+ *
+ * 新 SW 装好后只是接管了后续的网络请求，页面里已经跑着的旧 WASM 实例还在
+ * 内存中，要换掉只能刷新。不提示的话用户会一直用上一版，而且没有任何迹象
+ * 说明有新版——这正是离线优先的代价。
+ */
+function showUpdateNotice() {
+  if (reloadDismissed) return;
+  const note = document.getElementById('update-note');
+  if (!note) return;
+  note.hidden = false;
+}
+
+/** bindUpdateNotice 把版本提示的两个按钮接上。 */
+function bindUpdateNotice() {
+  const reload = document.getElementById('update-reload');
+  const dismiss = document.getElementById('update-dismiss');
+  if (reload) reload.addEventListener('click', () => location.reload());
+  if (dismiss) {
+    dismiss.addEventListener('click', () => {
+      reloadDismissed = true;
+      const note = document.getElementById('update-note');
+      if (note) note.hidden = true;
+    });
+  }
+}
+
+/**
+ * watchServiceWorkerUpdates 监听 Service Worker 换版。
+ *
+ * 两条触发路径都接上：
+ *   - controllerchange：新 SW 接管本页；
+ *   - updatefound → installed：新 SW 已装好但还在等（waiting）。
+ * 只看前者会漏掉"装好了但当前页面没被接管"的情况，只看后者则在 claim
+ * 时机与页面加载重叠时容易漏。
+ */
+function watchServiceWorkerUpdates(registration) {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadServiceWorkerController) {
+      // 首次 claim，不是换版。
+      hadServiceWorkerController = true;
+      return;
+    }
+    showUpdateNotice();
+  });
+  if (!registration) return;
+  const track = (worker) => {
+    if (!worker) return;
+    worker.addEventListener('statechange', () => {
+      // installed 且已有 controller，说明是"换版"而不是"首次安装"。
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+        showUpdateNotice();
+      }
+    });
+  };
+  track(registration.waiting);
+  registration.addEventListener('updatefound', () => track(registration.installing));
 }
 
 async function main() {
@@ -3663,6 +3738,7 @@ async function main() {
   });
 
   bindEvents();
+  bindUpdateNotice();
 
   try {
     await ready;

@@ -432,6 +432,36 @@ body {
 .notice.is-error { border-left-color: var(--error); }
 .notice.is-ok { border-left-color: var(--ok); }
 
+/* ——— 版本提示 ——— */
+
+.update-note {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* 隐藏时不能留高度：用 hidden 属性即可，这里只是别让它被 display:flex 覆盖。 */
+.update-note[hidden] { display: none; }
+
+.update-note-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.update-note-actions button {
+  font-size: 12px;
+  padding: 3px 12px;
+}
+
 /* ——— 预览 ——— */
 
 .preview-warning:empty { display: none; }
