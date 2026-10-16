@@ -19,3 +19,8 @@ browser-test/package-lock.json
 
 # 编辑器
 .idea/
+
+# 测试代码暂不入库
+/cmd/toolbox-wasm/web/test/
+/browser-test/
+/cmd/make-testdata/
