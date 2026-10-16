@@ -16,7 +16,7 @@ Service Worker 缓存与界面。
 | **格式转换** | OFD 转 PDF、PNG/JPG/TIFF、SVG、EPS、TeX、单文件 HTML、纯文本、Markdown、Word；PDF、PNG/JPG/TIFF、Markdown 转 OFD |
 | **文档校验** | 校验 ZIP、XML、引用关系与 XSD，报告可导出为 JSON / Markdown / 纯文本 |
 | **结构分析** | 页面对象、文字、资源、附件、注解、签名与引用关系概览，分章节展开 |
-| **发票抽取** | 从增值税电子发票 OFD 中读取结构化附件并输出 JSON |
+| **发票抽取** | 批量读取增值税电子发票 OFD，汇总金额并按销售方、票种、开票月份分组，可导出 JSON / CSV / XLSX |
 | **水印** | 在所选页添加、替换或删除文字/图片水印，支持布局、旋转、透明度和字体 |
 | **文档合并** | ZIP 级合并产出多文档包（保留原有资源与签名摘要），或模型级拼页产出单文档 |
 | **长期保存** | 按 GB/T 42133 第 6 章预检与执行，含删除无人引用条目 |
@@ -112,9 +112,10 @@ cmd/toolbox-wasm/
 - **Office 与 HTML 输入不可用。** docx/odt/rtf/wps/pptx/xlsx 和 html/mhtml 依赖
   LibreOffice 或 Chrome 命令行，浏览器里没有。界面仍然接受这些文件并说明缺什么，
   免得用户只能在失败之后才明白原因。
-- **不提供 XLSX 与 PDF 格式的报告导出。** XLSX 要带 excelize 进来，实测让 WASM
-  从 51.3MB 涨到 61.4MB、gzip 多 2MB；PDF 报告要嵌入中文字体，而浏览器里没有
-  系统字体目录。校验与分析报告可导出 JSON / Markdown / 纯文本。
-- **首次加载要下载 50MB 量级的模块**，之后由 Service Worker 缓存。
+- **校验与分析报告不提供 XLSX 与 PDF。** PDF 报告要嵌入中文字体，而浏览器里没有
+  系统字体目录。两者可导出 JSON / Markdown / 纯文本。发票报表不受此限，它走
+  ofd 的实现，XLSX 有明细工作表与列宽设置。
+- **WASM 有 63MB。** 发票 XLSX 导出要 excelize 进产物，单独贡献约 12.6MB
+  （gzip 多 2.3MB）。首次加载要下载整个模块，之后由 Service Worker 缓存。
 - **OFD 支持范围以 [`zc310/ofd` 的文档为准](https://github.com/zc310/ofd/blob/main/docs/OFD-SUPPORT.md)**，
   不同厂商的 OFD 存在扩展差异。

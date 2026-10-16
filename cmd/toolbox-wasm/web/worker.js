@@ -65,6 +65,7 @@ const STREAM_COMMANDS = {
   watermark: 'applyWatermark',
   merge: 'mergeDocuments',
   preserve: 'preserveApply',
+  invoicePdf: 'mergeInvoicePDF',
 };
 
 

@@ -19,6 +19,8 @@ import (
 // 以及 removeFallbackFont 时能判断是否重复注册。
 type fontEntry struct {
 	family string
+	// name 是展示名（本机字体的 fullName 或上传文件名），只用于界面与日志。
+	name   string
 	weight int
 	italic bool
 	// size 是字节数，界面上用来告诉用户字体一共占了多少内存。
@@ -63,12 +65,22 @@ func (a *wasmApp) addFallbackFont(_ js.Value, args []js.Value) any {
 			source = value
 		}
 	}
+	// name 是给人看的展示名（本机字体的 fullName、上传时的文件名）。
+	// 它不参与注册与渲染——选字形只看 family——但日志里只有它能说明
+	// "这份字节到底是哪个字体"，同一 family 反复换文件时尤其需要。
+	name := family
+	if len(args) >= 6 && args[5].Type() == js.TypeString {
+		if value := strings.TrimSpace(args[5].String()); value != "" {
+			name = value
+		}
+	}
 
 	// 先落到渲染引擎的全局注册表。失败要在这里报出来：注册表是进程级的，
 	// 事后无法撤销，因此不能像 newReader 里那样忽略错误。
 	if err := webreader.RegisterFallbackFont(webreader.FontSource{
 		Data:   data,
 		Family: family,
+		Name:   name,
 		Weight: weight,
 		Italic: italic,
 	}); err != nil {
@@ -89,6 +101,7 @@ func (a *wasmApp) addFallbackFont(_ js.Value, args []js.Value) any {
 	if !registered {
 		a.fonts = append(a.fonts, fontEntry{
 			family: family,
+			name:   name,
 			weight: weight,
 			italic: italic,
 			size:   len(data),
@@ -106,9 +119,10 @@ func (a *wasmApp) addFallbackFont(_ js.Value, args []js.Value) any {
 // 从 a.fonts 里去掉后，之后每次渲染新建的 Reader 都不再登记它，画面随即
 // 回退到缺字体的样子——这一点有测试守着（注册→渲染变化→移除→渲染复原）。
 //
-// 但字体字节仍留在渲染引擎的全局注册表里：那一层没有反注册接口，
-// 数据由注册表持有引用，不会被回收。反复注册不同字体是实打实的内存增长，
-// 界面上把每份字体的体积列出来就是为了让这件事可见。
+// 同时调 webreader.UnregisterFallbackFont 释放引擎全局注册表里的字节。
+// 仍被打开的文档引用着它时不会立即删除，而是等最后一个文档放手——那些文档
+// 还要用它渲染，提前释放会出问题。因此界面上的"删除"对已打开的文档是延迟
+// 生效的，这是有意的。
 func (a *wasmApp) removeFallbackFont(_ js.Value, args []js.Value) any {
 	if len(args) != 1 || args[0].Type() != js.TypeString {
 		return errorValue(errors.New("removeFallbackFont 需要字体族名"))
@@ -130,6 +144,9 @@ func (a *wasmApp) removeFallbackFont(_ js.Value, args []js.Value) any {
 	if !removed {
 		return errorValue(fmt.Errorf("字体族 %q 未注册", family))
 	}
+	if err := webreader.UnregisterFallbackFont(family); err != nil {
+		return errorValue(fmt.Errorf("释放字体族 %q 失败: %w", family, err))
+	}
 	return objectValue(map[string]any{"count": count})
 }
 
@@ -148,6 +165,7 @@ func (a *wasmApp) listFallbackFonts(_ js.Value, args []js.Value) any {
 			"italic": entry.italic,
 			"size":   entry.size,
 			"source": entry.source,
+			"name":   entry.name,
 		})
 		total += entry.size
 	}

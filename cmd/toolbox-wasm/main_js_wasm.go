@@ -16,6 +16,7 @@ import (
 	_ "github.com/zc310/ofd/pkg/converter/import/pdf"
 
 	"github.com/zc310/ofd/pkg/analyzer"
+	"github.com/zc310/ofd/pkg/invoice"
 	"github.com/zc310/ofd/pkg/validator"
 )
 
@@ -32,7 +33,10 @@ type wasmApp struct {
 	reports map[uint64]validator.Report
 	// analyses 暂存分析报告，与 reports 同样只保留最新一份。
 	analyses map[uint64]analyzer.Report
-	nextID   uint64
+	// invoiceBatches 暂存批量发票抽取结果。与上面两个一样只保留最新一份：
+	// 每份里带着全部明细行，攒着就是 wasm 内存里的垃圾。
+	invoiceBatches map[uint64]*invoice.Batch
+	nextID         uint64
 }
 
 func newWasmApp() *wasmApp {
@@ -92,8 +96,12 @@ func main() {
 	expose("analyzeSection", app.analyzeSection)
 	expose("analyzeExport", app.analyzeExport)
 
-	// 发票抽取。一次调用出结构化结果，无需暂存报告。
-	expose("extractInvoice", app.extractInvoice)
+	// 发票批量抽取与报表导出。一次调用出全部结果与金额汇总；导出时按批次
+	// ID 取回，不必重跑一遍抽取。
+	expose("extractInvoiceBatch", app.extractInvoiceBatch)
+	expose("invoiceBatchExport", app.invoiceBatchExport)
+	// 合并成一个 PDF。与转换、OFD 合并同理，产物几十 MB 起，走分块 + ACK。
+	expose("mergeInvoicePDF", app.mergeInvoicePDF)
 
 	// 水印。产物是一个新的 OFD 包，因此与转换同样走分块 + ACK 的流式路径。
 	expose("watermarkInventory", app.watermarkInventory)

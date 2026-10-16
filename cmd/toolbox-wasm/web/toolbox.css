@@ -1231,6 +1231,20 @@ table.report td:nth-child(5) { max-width: 260px; }
 
 .wm-check input { margin-top: 2px; }
 
+/* 发票 Tab 的两个开关上下各有内容：上面是待处理文件清单，下面是「开始批量
+   抽取」按钮行。.wm-fields 自身不带外边距，紧贴上方盒子、紧贴按钮行，读
+   起来像三块内容粘在一起。12px 与 .tool-actions 在合并、长期保存面板上用的
+   间距一致。 */
+#invoice-options {
+  margin: 12px 0;
+}
+
+/* 开关本身再留一点上下内边距：勾选框贴着文字框的边，鼠标经过时高亮区域
+   看着比文字大一圈，显得不齐。 */
+#invoice-options .wm-check {
+  padding: 4px 0;
+}
+
 /* ——— 字体面板 ——— */
 
 /* 字体列表比内存表长得多，面板要能滚动，否则几十个本地字体直接溢出屏幕。 */
@@ -1252,6 +1266,7 @@ table.report td:nth-child(5) { max-width: 260px; }
   padding: 0;
   list-style: none;
 }
+
 
 .font-items li {
   display: flex;
@@ -1344,6 +1359,28 @@ table.report td:nth-child(5) { max-width: 260px; }
    合并这边上方是 .merge-body 网格容器，它内部的 gap 管不到跨容器间距，
    所以要在容器外面补。与长期保存同为 16px。 */
 .merge-body + .tool-actions { margin-top: 16px; }
+
+/* 合并 PDF 产物区里「下载 PDF」按钮与上方结果条的间距。同一类问题：
+   .tool-actions 没有 margin-top，按钮直接贴住上方容器的下边框。
+   与合并、长期保存面板的 16px 一致。 */
+#invoice-pdf-result .tool-actions { margin-top: 16px; }
+
+/* 合并 PDF 的选项区。块级分组 + 组内自适应网格：
+   把几个 .wm-fields 塞进 .wm-form（它本身是 grid）会让它们并排成列、字段被
+   拉到同一高度，group-title 也被当成网格项。这里用一层普通流容器分组，
+   组内沿用 .wm-fields 的自适应列。 */
+.invoice-pdf-opts {
+  display: grid;
+  gap: 12px;
+}
+
+.invoice-pdf-opts > .wm-check { padding: 0; }
+
+.invoice-pdf-opts .group-title { margin: 0; }
+
+/* 字体与提示占满一行：字体名可能很长，挤在半列里会被截断。 */
+.invoice-pdf-opts #wm-invoice-pdf-font,
+.invoice-pdf-opts #invoice-pdf-font { grid-column: 1 / -1; }
 
 /* ——— 长期保存 ——— */
 

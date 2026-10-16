@@ -23,6 +23,15 @@ func jsonUnmarshal(data []byte, target any) error {
 	return json.Unmarshal(data, target)
 }
 
+// jsonMarshalIndent 是 jsonMarshal 的缩进变体，只给导出给人看的文件用。
+//
+// 单独开一个入口而不是在 jsonMarshal 上加参数：网页取回值一律走紧凑格式
+// （几十张票的 JSON 缩进后体积翻几倍，而那边只做字段读取），需要缩进的只有
+// 落到磁盘的那一份。
+func jsonMarshalIndent(value any) ([]byte, error) {
+	return json.MarshalIndent(value, "", "  ")
+}
+
 // jsonTime 统一时间字段的呈现。Report 里的 StartedAt 等字段用默认 RFC3339
 // 即可，但网页端要显示"3 分钟前"这类相对时间，额外给出毫秒时间戳避免
 // 自己解析字符串。

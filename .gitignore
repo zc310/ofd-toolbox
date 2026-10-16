@@ -13,5 +13,9 @@ testdata/
 browser-test/node_modules/
 browser-test/package-lock.json
 
+# 宿主目标 go build 的产物（仓库里只有 cmd/make-testdata 是宿主目标，
+# 不入库，见 README 的说明）
+/make-testdata
+
 # 编辑器
 .idea/

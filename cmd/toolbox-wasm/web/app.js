@@ -57,6 +57,14 @@ const state = {
   treeCollapsed: new Set(),
   /** invoiceDetailAll 为真时发票明细表展开全部行。 */
   invoiceDetailAll: false,
+  /**
+   * invoicePdfFontFamily 与 invoicePdfFontName 是汇总页当前选中的字体。
+   *
+   * 两个都要：family 是注册键，name 是给用户看的展示名。同名不同文件、
+   * 同名不同字重都很常见，只有 family 的话用户无从确认自己选的是哪一份。
+   */
+  invoicePdfFontFamily: '',
+  invoicePdfFontName: '',
   /** watermarkPages 是水印作用的页码集合；null 表示全部页面。 */
   watermarkPages: null,
   /** watermarkInventory 是当前文档已有的水印清单。 */
@@ -824,10 +832,17 @@ function resetInvoicePanel() {
   const host = document.getElementById('invoice');
   if (!host) return;
   delete host.dataset.built;
+  // 批次 ID 指向 WASM 侧那份结果，而 storeInvoiceBatch 只保留最新一份。
+  // 文件队列变了之后旧批次随时可能被下一次抽取顶掉，这里一并作废，免得
+  // 用户点导出时拿到"批次不存在"。
+  invoiceBatchID = 0;
+  state.results.invoiceBatch = null;
+  state.invoicePdfResult = null;
+  invoiceDetail = null;
   if (state.tab === 'invoice') {
     buildInvoicePanel(host);
   } else {
-    host.replaceChildren(note('载入发票 OFD 后点击「开始抽取」。'));
+    host.replaceChildren(note('把发票 OFD 加入文件队列后点击「开始批量抽取」。'));
   }
 }
 
@@ -1285,23 +1300,411 @@ const invoiceGroups = [
   ] },
 ];
 
-/** buildInvoicePanel 搭出发票面板的骨架。 */
+/** invoiceBatchID 是当前发票批次的 WASM 侧 ID，导出时按它取回结果。 */
+let invoiceBatchID = 0;
+
+/**
+ * invoiceDetail 是详情视图当前在看的那张票。
+ *
+ * 明细表的"展开全部"与金额自校验都要读它，而这两个回调在 renderInvoice
+ * 之外注册，拿不到形参，只能读这个模块级状态。
+ */
+let invoiceDetail = null;
+
+/**
+ * buildInvoicePanel 搭出发票面板的骨架。
+ *
+ * 处理对象是文件队列里全部已打开的 OFD，而不是当前选中的那一个：一次对账
+ * 通常是一叠票，逐张切换再点抽取既慢又容易漏。
+ */
 function buildInvoicePanel(host) {
   host.replaceChildren();
   host.dataset.built = '1';
 
+  const files = document.createElement('div');
+  files.id = 'invoice-files';
+
+  const options = document.createElement('div');
+  options.className = 'wm-fields';
+  options.id = 'invoice-options';
+  options.append(
+    checkboxField('invoice-dedup', '按发票代码与号码去重（重复的只计第一张）'),
+    checkboxField('invoice-skip-broken', '跳过抽取失败的文件（关闭则遇错即停）', true),
+  );
+
+  const pdfBox = document.createElement('div');
+  pdfBox.id = 'invoice-pdf';
+  pdfBox.className = 'wm-form';
+  pdfBox.append(invoicePdfTitle(), invoicePdfOptions(), invoicePdfActions());
+
   const actions = document.createElement('div');
   actions.className = 'tool-actions';
-  const start = actionButton('开始抽取', runInvoiceExtract);
+  const start = actionButton('开始批量抽取', runInvoiceExtract);
   start.id = 'invoice-start';
-  start.disabled = !state.doc;
   actions.append(start);
 
   const result = document.createElement('div');
   result.id = 'invoice-result';
   result.className = 'report-host';
 
-  host.append(actions, result, invoiceNote());
+  const pdfResult = document.createElement('div');
+  pdfResult.id = 'invoice-pdf-result';
+
+  host.append(files, options, actions, pdfBox, pdfResult, result, invoiceNote());
+  syncInvoiceFields();
+  refreshInvoicePdfFonts();
+}
+
+/** invoicePdfTitle 画合并 PDF 的标题。 */
+function invoicePdfTitle() {
+  const title = document.createElement('div');
+  title.className = 'group-title';
+  title.textContent = '合并为一个 PDF';
+  return title;
+}
+/**
+ * invoicePdfOptions 画合并 PDF 的选项。
+ *
+ * 分组用块级容器而不是把几个 .wm-fields 塞进 .wm-form：后者本身是 grid，
+ * 塞进去的每一组都会变成并排的网格项，字段被拉到同一高度、group-title 也
+ * 被当成网格项甩到行尾去。
+ *
+ * 字体统一用右上角「字体」面板里已注册的那些，不在这里另开一套选择器：
+ * 字形本来就在引擎的注册表里，再存一份既白占内存（一份中文字体十几 MB），
+ * 也会让人在两个地方选到不一样的字体。汇总页只是把其中一族换个族名再注册。
+ *
+ * 汇总页要字体是必需的：ofd 那边只声明逻辑字体名、由创建器去子集化实际
+ * 字形，浏览器里没有系统字体目录，不给字形就得到一页空白。
+ */
+function invoicePdfOptions() {
+  const wrap = document.createElement('div');
+  wrap.className = 'invoice-pdf-opts';
+
+  wrap.append(checkboxField('invoice-pdf-cover', '首页插入汇总对账页'));
+
+  // 提示单独拿在手里：syncInvoicePdfFields 与刷新逻辑都按 id 找它。
+  const coverHint = hintNode('');
+  coverHint.id = 'invoice-pdf-font';
+
+  const report = document.createElement('div');
+  report.append(
+    groupTitle('对账与页序'),
+    fieldsGrid([
+      selectField('invoice-pdf-sort', '票序', [
+        { value: 'input', label: '按文件队列顺序' },
+        { value: 'date', label: '按开票日期' },
+        { value: 'code', label: '按发票代码与号码' },
+        { value: 'name', label: '按销售方名称' },
+      ], 'input'),
+      selectField('invoice-pdf-pages', '每张票输出', [
+        { value: 'all', label: '全部页面' },
+        { value: 'face', label: '只取票面页' },
+        { value: 'first', label: '只取第 1 页' },
+      ], 'all'),
+      // 取页还接受页码表达式，但那一项要自由输入，与下拉框不是一回事，
+      // 单独放一个输入框而不是混进上面的选项里。
+      textField('invoice-pdf-page-spec', '或按票内页码（如 1,3-5）', ''),
+      selectField('invoice-pdf-font', '汇总页字体', [], ''),
+    ]),
+    coverHint,
+  );
+  wrap.append(report);
+
+  wrap.append(
+    groupTitle('打印版面'),
+    fieldsGrid([
+      selectField('invoice-pdf-paper', '纸张', [
+        { value: '', label: '按票面自身尺寸' },
+        { value: 'A4', label: 'A4' },
+        { value: 'A3', label: 'A3' },
+        { value: 'A5', label: 'A5' },
+        { value: 'B5', label: 'B5' },
+        { value: '16开', label: '16 开' },
+        { value: 'Letter', label: 'Letter' },
+        { value: 'Legal', label: 'Legal' },
+      ], ''),
+      selectField('invoice-pdf-orientation', '方向', [
+        { value: 'auto', label: '自动（按占用率）' },
+        { value: 'portrait', label: '纵向' },
+        { value: 'landscape', label: '横向' },
+      ], 'auto'),
+      selectField('invoice-pdf-nup', '每张纸放几票', [
+        { value: '1', label: '1（不拼版）' },
+        { value: '2', label: '2（单列纵排）' },
+        { value: '3', label: '3（单列纵排）' },
+        { value: '4', label: '4（2×2）' },
+        { value: '6', label: '6（2×3）' },
+        { value: '8', label: '8（2×4）' },
+        { value: '9', label: '9（3×3）' },
+      ], '1'),
+      numberField('invoice-pdf-nup-gap', '格子间距 (mm)', 0, 0, 50, 1),
+      checkboxField('invoice-pdf-cell-border', '给每格描边（打印后便于裁切）'),
+    ]),
+  );
+
+  // 勾上「首页插入汇总对账页」就需要字体了，按钮状态随之变化。
+  wrap.querySelector('#wm-invoice-pdf-cover')
+    ?.addEventListener('change', () => syncInvoicePdfFields());
+  wrap.querySelector('#wm-invoice-pdf-font')
+    ?.addEventListener('change', () => {
+      const picked = document.getElementById('wm-invoice-pdf-font').value;
+      const font = invoicePdfFonts.find((f) => f.family === picked);
+      state.invoicePdfFontFamily = picked;
+      state.invoicePdfFontName = font ? font.name : '';
+      syncInvoicePdfFields();
+    });
+  syncInvoiceLayoutDimming(wrap);
+  wrap.querySelector('#wm-invoice-pdf-nup')
+    ?.addEventListener('change', () => syncInvoiceLayoutDimming(wrap));
+  return wrap;
+}
+
+/** groupTitle 造一个分组标题。 */
+function groupTitle(text) {
+  const node = document.createElement('div');
+  node.className = 'group-title';
+  node.textContent = text;
+  return node;
+}
+
+/** fieldsGrid 把若干字段排成自适应网格。 */
+function fieldsGrid(fields) {
+  const grid = document.createElement('div');
+  grid.className = 'wm-fields';
+  grid.append(...fields);
+  return grid;
+}
+
+/**
+ * syncInvoiceLayoutDimming 在不拼版时把格子间距与描边置灰。
+ *
+ * 留着能填的数字会让人以为它起作用。必须在 wrap 子树里查：这一步跑的时候
+ * 面板还没挂到 document 上，getElementById 只认已入文档的节点，那样查到的
+ * 全是 null，置灰静默失效。
+ */
+function syncInvoiceLayoutDimming(wrap) {
+  const nup = wrap.querySelector('#wm-invoice-pdf-nup')?.value || '1';
+  const off = nup === '1';
+  for (const id of ['wm-invoice-pdf-nup-gap', 'wm-invoice-pdf-cell-border']) {
+    const node = wrap.querySelector(`#${id}`);
+    if (!node) continue;
+    const field = node.closest('.field') || node.closest('label');
+    if (field) field.style.opacity = off ? '.45' : '1';
+  }
+}
+
+/**
+ * invoicePagesSpec 决定每张票输出哪些页。
+ *
+ * 页码表达式优先于下拉框：那一项能写 "1,3-5"，是三个预设覆盖不了的用法。
+ * 两处都空时按"全部页面"处理，不必在界面上多一个默认项。
+ */
+function invoicePagesSpec() {
+  const spec = document.getElementById('wm-invoice-pdf-page-spec')?.value.trim();
+  if (spec) return spec;
+  return document.getElementById('wm-invoice-pdf-pages')?.value || 'all';
+}
+
+/** KAI_RE 认得出楷体这一族（KaiTi、楷体、DFKai-SB 等常见写法）。 */
+const KAI_RE = /kai|楷/i;
+
+/**
+ * refreshInvoicePdfFonts 用已注册字体填汇总页的下拉框。
+ *
+ * 默认选楷体：ofd 的汇总页就是按这个逻辑字体名取的。列表里没有楷体时也不
+ * 静默换一个字体顶替——换成别的字形虽然能出字，但与票面对不上，而用户不会
+ * 知道换过。
+ */
+/**
+ * invoicePdfFonts 是最近一次 listFallbackFonts 的结果，供切换下拉框时反查
+ * 展示名用。字体列表的变化都要经过 refreshInvoicePdfFonts，缓存不会过期。
+ */
+let invoicePdfFonts = [];
+
+async function refreshInvoicePdfFonts() {
+  const select = document.getElementById('wm-invoice-pdf-font');
+  if (!select) return;
+  let fonts = [];
+  try {
+    const listed = await call('listFallbackFonts');
+    fonts = (listed.fonts || []).filter((f) => f.family);
+    invoicePdfFonts = fonts;
+  } catch {
+    // 取不到就当没有：下面会给出"先去注册"的提示，比报错有用。
+  }
+  const families = fonts.map((f) => f.family);
+
+  const previous = state.invoicePdfFontFamily || '';
+  select.replaceChildren();
+  if (!families.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '（尚未注册任何字体）';
+    select.append(option);
+    state.invoicePdfFontFamily = '';
+  } else {
+    for (const font of fonts) {
+      const option = document.createElement('option');
+      option.value = font.family;
+      option.textContent = fontDisplayLabel(font);
+      select.append(option);
+    }
+    const preferred = families.find((f) => KAI_RE.test(f)) || families[0];
+    const chosen = fonts.find((f) => f.family
+      === (families.includes(previous) ? previous : preferred));
+    state.invoicePdfFontFamily = chosen ? chosen.family : '';
+    state.invoicePdfFontName = chosen ? chosen.name : '';
+    select.value = state.invoicePdfFontFamily;
+  }
+  syncInvoicePdfFields();
+}
+
+/** invoicePdfActions 画合并 PDF 的按钮。 */
+function invoicePdfActions() {
+  const row = document.createElement('div');
+  row.className = 'tool-actions';
+  const run = actionButton('生成合并 PDF', runInvoicePdfMerge);
+  run.id = 'invoice-pdf-run';
+  row.append(run);
+  return row;
+}
+
+/**
+ * renderInvoicePdfResult 画合并 PDF 的产物区。
+ *
+ * 产物是任务结束后才有的，所以这个区要在生成时重建，不能只留在任务条上：
+ * 任务条会被下一次操作顶掉，而 PDF 是用户拿到手就要存下来的东西。
+ */
+function renderInvoicePdfResult(result) {
+  const box = document.getElementById('invoice-pdf-result');
+  if (!box) return;
+  box.replaceChildren();
+
+  const bar = document.createElement('div');
+  bar.className = 'notice is-ok';
+  const title = document.createElement('strong');
+  const cover = result.cover ? '含汇总首页' : '不含汇总首页';
+  title.textContent = `已合并 ${result.merged} 张 · ${cover} · ${formatBytes(result.size)}`;
+  bar.append(title);
+  const skipped = (result.batch && result.batch.skipped) || [];
+  if (skipped.length) {
+    const detail = document.createElement('div');
+    detail.textContent = `${skipped.length} 个文件未并入（重复或抽取失败），清单里标了出来。`;
+    bar.append(detail);
+  }
+
+  // 汇总页用的是哪个字形来源摆出来：首页空白时第一眼就该怀疑字体，
+  // 而不是等到打印才发现。
+  if (result.cover) {
+    const detail = document.createElement('div');
+    detail.textContent = `汇总页用「${state.invoicePdfFontFamily}」绘制。`;
+    bar.append(detail);
+  }
+  box.append(bar);
+
+  const actions = document.createElement('div');
+  actions.className = 'tool-actions';
+  const download = actionButton('下载 PDF', downloadInvoicePdf);
+  download.id = 'invoice-pdf-download';
+  actions.append(download);
+  box.append(actions);
+}
+
+/** downloadInvoicePdf 下载合并出来的 PDF。 */
+function downloadInvoicePdf() {
+  const result = state.invoicePdfResult;
+  if (!result || !result.blob) return;
+  downloadBlob(result.blob, result.name || 'invoices.pdf');
+}
+
+/**
+ * invoicePdfFontFamily 是汇总页要用的已注册字体族名。
+ *
+ * 存在 state 里而不是模块变量：这个值要跨面板重建保留下来（面板重建时
+ * state 不清，模块变量也会留着，但 state 才是这份状态该待的地方）。
+ */
+state.invoicePdfFontFamily = '';
+
+
+/** syncInvoicePdfFields 同步合并 PDF 的按钮状态与字体提示。 */
+function syncInvoicePdfFields() {
+  const hint = document.getElementById('invoice-pdf-font');
+  const family = state.invoicePdfFontFamily || '';
+  if (hint) {
+    // 展示名一并说出来：族名相同的字体不止一个（同名不同文件、不同字重），
+    // 只说族名的话用户不知道自己选的是哪一份，汇总页空白时也无从排查。
+    const label = fontDisplayLabel(
+      { family, name: state.invoicePdfFontName });
+    hint.textContent = family
+      ? `用已注册的「${label}」生成汇总页`
+      : '还没有已注册字体。汇总页的中文需要真实字形，'
+        + '请先在右上角「字体」里注册一个（如楷体）。';
+  }
+  const run = document.getElementById('invoice-pdf-run');
+  if (!run) return;
+  const sources = invoiceSources();
+  const needFont = checkboxValue('invoice-pdf-cover');
+  run.disabled = state.busy || sources.length < 1 || (needFont && !family);
+  run.textContent = sources.length < 2 ? '合并 PDF（至少两个文件）' : '生成合并 PDF';
+}
+
+/**
+ * runInvoicePdfMerge 合并发票为一个 PDF。
+ *
+ * 走 convert() 的流式通道：产物几十 MB 起，与转换、OFD 合并同一条路径。
+ */
+async function runInvoicePdfMerge() {
+  const sources = invoiceSources();
+  if (!sources.length || state.busy) return;
+  const cover = checkboxValue('invoice-pdf-cover');
+  if (cover && !state.invoicePdfFontFamily) {
+    showNotice('生成汇总页需要一个中文字体，请先在右上角「字体」里注册。', true);
+    return;
+  }
+
+  state.busy = true;
+  syncInvoicePdfFields();
+  setTask('读取输入', 0, true);
+
+  try {
+    const payload = [];
+    for (let index = 0; index < sources.length; index++) {
+      const file = sources[index];
+      setTask(`读取输入 ${index + 1}/${sources.length}`, 0, true, file.name);
+      payload.push({ name: file.name, data: new Uint8Array(await file.file.arrayBuffer()) });
+    }
+
+    setTask('生成 PDF', 0, true);
+    const result = await convert({
+      command: 'invoicePdf',
+      sources: payload,
+      dedup: checkboxValue('invoice-dedup'),
+      skipBroken: checkboxValue('invoice-skip-broken'),
+      sort: document.getElementById('wm-invoice-pdf-sort')?.value || 'input',
+      cover,
+      // 只报族名：字形由 WASM 从注册表里取，不必再传一遍字节。
+      coverFont: state.invoicePdfFontFamily,
+      pages: invoicePagesSpec(),
+      paper: document.getElementById('wm-invoice-pdf-paper')?.value || '',
+      orientation: document.getElementById('wm-invoice-pdf-orientation')?.value || '',
+      nUp: Number(document.getElementById('wm-invoice-pdf-nup')?.value || 1),
+      nUpGap: Number(document.getElementById('wm-invoice-pdf-nup-gap')?.value || 0),
+      cellBorder: checkboxValue('invoice-pdf-cell-border'),
+    }, null);
+
+    state.invoicePdfResult = result;
+    invoiceBatchID = result.batch_id;
+    state.results.invoiceBatch = result.batch;
+    renderInvoiceBatch(result.batch);
+    renderInvoicePdfResult(result);
+    finishTask('已生成', `${result.merged} 张 · ${formatBytes(result.size)}`);
+  } catch (error) {
+    finishTask('生成失败', error.message);
+    showNotice(`合并 PDF 失败：${error.message}`, true);
+  } finally {
+    state.busy = false;
+    syncInvoicePdfFields();
+  }
 }
 
 /** invoiceResultHost 取发票结果宿主，必要时先建面板。 */
@@ -1319,31 +1722,99 @@ function invoiceNote() {
   const node = document.createElement('p');
   node.className = 'hint';
   node.textContent = '字段取自包内的发票结构化附件；发票标题与价税合计大写'
-    + '由页面文字层补齐。抽取结果仅供核对，票面以原件为准。';
+    + '由页面文字层补齐。金额合计与分组由 ofd 侧算出，与票面可能有出入的'
+    + '地方以原件为准。CSV 报表带 BOM 与合计行，可直接用 Excel 打开；'
+    + 'XLSX 另含明细工作表与列宽设置。';
   return node;
 }
 
-/** runInvoiceExtract 执行抽取并画字段表。 */
+/**
+ * invoiceSources 返回文件队列里全部 OFD。
+ *
+ * 其它 Tab（转换、合并）都是按选中文件工作的，发票这里刻意不同：一批票就是
+ * 队列里的全部 OFD。而且不要求它们已打开——文档句柄只在选中时才建，让用户
+ * 先把一叠票逐个点开才谈得上批量，是把用法绑在了实现细节上。
+ */
+function invoiceSources() {
+  return state.files.filter((file) => file.name.toLowerCase().endsWith('.ofd'));
+}
+
+/** syncInvoiceFields 按队列内容更新发票面板的可用状态与文件清单。 */
+function syncInvoiceFields() {
+  const start = document.getElementById('invoice-start');
+  const sources = invoiceSources();
+  if (start) start.disabled = !sources.length || state.busy;
+  syncInvoicePdfFields();
+  const list = document.getElementById('invoice-files');
+  if (!list) return;
+  list.replaceChildren();
+  if (!sources.length) {
+    list.append(note('把发票 OFD 加入文件队列。'));
+    return;
+  }
+  const box = document.createElement('div');
+  box.className = 'notice';
+  const title = document.createElement('strong');
+  title.textContent = `将处理队列里的 ${sources.length} 个 OFD`;
+  box.append(title);
+  for (const file of sources) {
+    const row = document.createElement('div');
+    // 未打开的文件没有页数：这里只说明会处理它，不为了显示页数去把每个
+    // 文件都打开一遍——那正是这个 Tab 要避开的开销。
+    const pages = file.doc ? ` · ${file.doc.pageCount} 页` : '';
+    row.textContent = `${file.name}${pages}`;
+    box.append(row);
+  }
+  list.append(box);
+}
+
+/** runInvoiceExtract 批量抽取并画汇总与清单。 */
 async function runInvoiceExtract() {
-  if (!state.doc || state.busy) return;
+  const sources = invoiceSources();
+  if (!sources.length || state.busy) return;
   state.busy = true;
+  syncInvoiceFields();
   const host = invoiceResultHost();
   host.replaceChildren(note('正在抽取…'));
   setTask('抽取中', 0, true);
 
   const started = performance.now();
   try {
-    const result = await call('extractInvoice', state.doc.id);
-    state.results.invoice = result;
-    renderInvoice(result);
+    // 传原始字节而不是文档 ID：抽取只需要包内的结构化附件，不必先把每个
+    // 文件解析成可渲染的句柄。ArrayBuffer 要等得到，所以在这里读。
+    const payload = [];
+    for (const file of sources) {
+      payload.push({ name: file.name, data: new Uint8Array(await file.file.arrayBuffer()) });
+    }
+    const result = await call('extractInvoiceBatch', payload, {
+      dedup: checkboxValue('invoice-dedup'),
+      skipBroken: checkboxValue('invoice-skip-broken'),
+    });
+    invoiceBatchID = result.batch_id;
+    state.results.invoiceBatch = result.batch;
+    renderInvoiceBatch(result.batch);
     const elapsed = (performance.now() - started) / 1000;
-    finishTask('抽取完成', `${elapsed.toFixed(1)} 秒`);
+    const summary = result.batch.summary || {};
+    finishTask('抽取完成',
+      `${summary.count ?? 0} 张 · ${elapsed.toFixed(1)} 秒`);
   } catch (error) {
     renderInvoiceError(error.message);
     finishTask('抽取失败');
   } finally {
     state.busy = false;
+    syncInvoiceFields();
   }
+}
+
+/**
+ * checkboxValue 取复选框的勾选状态。
+ *
+ * id 要传 checkboxField 的原始参数而非带 wm- 前缀的元素 id：前缀是那个函数
+ * 内部加的，这里跟着加，两处才不会出现"传了 id 却读不到"的错位。
+ */
+function checkboxValue(id) {
+  const node = document.getElementById(`wm-${id}`);
+  return node ? Boolean(node.checked) : false;
 }
 
 /**
@@ -1357,6 +1828,8 @@ function renderInvoiceError(message) {
   host.replaceChildren();
   const box = document.createElement('div');
   box.className = 'notice is-error';
+  // 文件清单那块也是 .notice，用 id 区分开：样式相同不代表语义相同。
+  box.id = 'invoice-error';
   const title = document.createElement('strong');
   title.textContent = '无法抽取发票信息';
   const detail = document.createElement('div');
@@ -1365,11 +1838,165 @@ function renderInvoiceError(message) {
   host.append(box);
 }
 
-/** renderInvoice 画发票字段表与明细。 */
-function renderInvoice(invoice) {
+/**
+ * renderInvoiceBatch 画一批发票的汇总与清单。
+ *
+ * 清单先于详情：一次对账关心的是"一共多少张、合计多少、哪张有问题"，
+ * 逐张字段表是点开某一张之后才要看的东西。
+ */
+function renderInvoiceBatch(batch) {
   const host = invoiceResultHost();
   if (!host) return null;
   host.replaceChildren();
+
+  host.append(invoiceSummary(batch.summary || {}));
+  if ((batch.skipped || []).length) host.append(invoiceSkipped(batch.skipped));
+  host.append(invoiceItemTable(batch.items || [], batch.summary || {}));
+  host.append(invoiceExportRow());
+  return host;
+}
+
+/** invoiceSummary 画金额汇总与三个维度的分组。 */
+function invoiceSummary(summary) {
+  const box = document.createElement('div');
+  box.className = 'notice is-ok';
+
+  const title = document.createElement('strong');
+  const red = summary.red ? `，其中红字 ${summary.red} 张` : '';
+  title.textContent = `参与汇总 ${summary.count ?? 0} 张${red}`;
+  box.append(title);
+
+  const amounts = document.createElement('dl');
+  amounts.className = 'kv';
+  for (const [label, value] of [
+    ['不含税金额合计', summary.amount],
+    ['税额合计', summary.tax_amount],
+    ['价税合计', summary.total_amount],
+  ]) {
+    if (value === undefined || value === null || value === '') continue;
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    // 金额是十进制字符串，原样显示：转 Number 再格式化会丢小数位。
+    dd.classList.add('is-strong');
+    dd.textContent = String(value);
+    amounts.append(dt, dd);
+  }
+  if (amounts.children.length) box.append(amounts);
+
+  for (const [key, label] of [['by_seller', '按销售方'], ['by_type', '按票种'],
+    ['by_month', '按开票月份']]) {
+    const groups = summary[key];
+    if (!groups || !groups.length) continue;
+    box.append(invoiceGroupTable(label, groups));
+  }
+  return box;
+}
+
+/** invoiceGroupTable 画一个维度的分组合计。 */
+function invoiceGroupTable(label, groups) {
+  const wrap = document.createElement('div');
+  const title = document.createElement('div');
+  title.className = 'group-title';
+  title.textContent = `${label}（${groups.length} 组）`;
+  wrap.append(title);
+
+  // 用 simpleTable 而不是手写 <tr>：DOM 的 append 不会像 HTML 解析器那样自动
+  // 补 tbody，<tr> 直挂到 table 上时 querySelector('tbody tr') 一行也找不到，
+  // 表格样式与选中态也跟着失效。
+  wrap.append(simpleTable(['名称', '张数', '价税合计'], groups.map((group) => [
+    group.name || group.key || '—',
+    `${group.count ?? 0}${group.red ? `（红字 ${group.red}）` : ''}`,
+    // 金额是十进制字符串，原样显示：转 Number 再格式化会丢小数位。
+    group.total_amount === undefined || group.total_amount === null
+      ? '—' : String(group.total_amount),
+  ])));
+  return wrap;
+}
+
+/** invoiceSkipped 画被去重跳过的输入。 */
+function invoiceSkipped(skipped) {
+  const box = document.createElement('div');
+  box.className = 'notice';
+  const title = document.createElement('strong');
+  title.textContent = `${skipped.length} 个文件未参与合计`;
+  box.append(title);
+  for (const item of skipped) {
+    const row = document.createElement('div');
+    row.textContent = `${item.name}：${item.reason || '—'}`;
+    box.append(row);
+  }
+  return box;
+}
+
+/**
+ * invoiceItemTable 画逐票清单。
+ *
+ * 点一行看那张票的字段表；抽取失败的行不可点，否则点进去是一张空票面，
+ * 反而不如把失败原因留在行里。
+ */
+function invoiceItemTable(items, summary) {
+  const box = document.createElement('div');
+  const title = document.createElement('div');
+  title.className = 'group-title';
+  title.textContent = `发票清单（${items.length} 个文件）`;
+  box.append(title);
+
+  const table = simpleTable(['文件', '状态', '发票号码', '开票日期', '价税合计'],
+    items.map((item) => {
+      let status;
+      if (item.error) status = item.error;
+      else if (item.duplicate_of) status = `与 ${item.duplicate_of} 重复`;
+      else status = item.invoice ? (item.red ? '红字发票' : '已抽取') : '—';
+      return [item.name || '—', status, item.invoice?.number || '—',
+        item.invoice?.date || '—', item.invoice?.total_amount || '—'];
+    }));
+  box.append(table);
+
+  // 点行看那张票。失败与重复的行不可点：点进去要么是空票面，要么是另一张
+  // 已经看过的票，不如把原因留在行里。
+  //
+  // mono 与 is-error 要在这一步补：simpleTable 只认文本，不带列级样式。
+  const rows = table.querySelectorAll('tbody tr');
+  items.forEach((item, index) => {
+    const row = rows[index];
+    if (!row) return;
+    [2, 4].forEach((cell) => row.children[cell]?.classList.add('mono'));
+    if (item.error) row.children[1].classList.add('is-error');
+    if (!item.invoice || item.error) return;
+    row.classList.add('is-clickable');
+    row.addEventListener('click', () => showInvoiceDetail(item));
+  });
+
+  if (summary.count && summary.count !== items.length) {
+    const hint = document.createElement('p');
+    hint.className = 'option-hint';
+    hint.textContent = `汇总按 ${summary.count} 张计算，其余文件未参与合计。`;
+    box.append(hint);
+  }
+  return box;
+}
+
+/** showInvoiceDetail 打开某张票的字段表。 */
+function showInvoiceDetail(item) {
+  renderInvoice(item.invoice, item.name);
+}
+
+/**
+ * renderInvoice 画单张发票的字段表与明细。
+ *
+ * sourceName 是这张票对应的文件名：ofd 侧的 Invoice 里没有它，那是界面上
+ * 用来区分同一批里两张同号票的信息，不能混进发票字段（导出 JSON 时也不该
+ * 出现）。
+ */
+function renderInvoice(raw, sourceName) {
+  const host = invoiceResultHost();
+  if (!host) return null;
+  host.replaceChildren();
+  // 一定要复制：raw 是批次结果里的那张票，原地补 source 会把 state 里的
+  // 批次一起改掉，之后复制到剪贴板的 JSON 就带上了界面拼的字段。
+  const invoice = { ...raw, source: sourceName || raw.source };
+  invoiceDetail = invoice;
 
   host.append(invoiceHead(invoice));
   for (const group of invoiceGroups) {
@@ -1394,10 +2021,41 @@ function renderInvoice(invoice) {
 
   const actions = document.createElement('div');
   actions.className = 'tool-actions';
-  actions.append(actionButton('导出 JSON', () => exportInvoiceJSON()));
+  // 导出的是整批而不是这一张：看单张时多半已经跑完一批，用户要的通常是
+  // 全部结果而不是刚才点开的那一行。
+  const back = actionButton('返回清单', () => {
+    const batch = state.results.invoiceBatch;
+    if (batch) renderInvoiceBatch(batch);
+  });
+  back.id = 'invoice-back';
+  back.className = 'ghost';
+  actions.append(back);
+  actions.append(...invoiceExportButtons());
   actions.append(actionButton('复制到剪贴板', () => copyInvoiceJSON()));
   host.append(actions);
   return host;
+}
+
+/**
+ * invoiceExportButtons 画三个格式的导出按钮。
+ *
+ * 清单视图与详情视图共用同一组，否则两处各写一遍、以后改格式容易漏掉一处。
+ */
+function invoiceExportButtons() {
+  return [
+    actionButton('导出 JSON', () => exportInvoiceJSON()),
+    actionButton('导出 CSV', () => exportInvoiceCSV()),
+    actionButton('导出 XLSX', () => exportInvoiceXLSX()),
+  ];
+}
+
+/** invoiceExportRow 画清单视图底下的导出按钮。 */
+function invoiceExportRow() {
+  const row = document.createElement('div');
+  row.className = 'tool-actions';
+  row.append(...invoiceExportButtons());
+  row.append(actionButton('复制到剪贴板', () => copyInvoiceJSON()));
+  return row;
 }
 
 /** invoiceHead 画头部：票面标题与来源附件。 */
@@ -1500,7 +2158,7 @@ function detailTable(details) {
       ? '只看前 20 行' : `展开全部 ${details.length} 行`;
     toggle.addEventListener('click', () => {
       state.invoiceDetailAll = !expanded;
-      renderInvoice(state.results.invoice);
+      if (invoiceDetail) renderInvoice(invoiceDetail);
     });
     more.append(toggle);
     box.append(more);
@@ -1509,8 +2167,7 @@ function detailTable(details) {
   // 明细金额与合计对不上是常见的核算问题，值得在界面上直接点出来。
   // 合计按全部行算，不是按当前显示的行——否则折叠状态下会误报不一致。
   const sum = details.reduce((total, row) => total + (Number(row.amount) || 0), 0);
-  const declared = state.results.invoice;
-  const declaredTotal = Number(declared && declared.amount) || 0;
+  const declaredTotal = Number((invoiceDetail && invoiceDetail.amount) || 0);
   if (declaredTotal && Math.abs(sum - declaredTotal) > 0.01) {
     const notice = document.createElement('div');
     notice.className = 'notice is-error';
@@ -1520,28 +2177,48 @@ function detailTable(details) {
   return box;
 }
 
-/** invoiceJSON 生成可导出的 JSON 文本。 */
+/**
+ * invoiceJSON 生成可复制的 JSON 文本。
+ *
+ * 直接拼而不走 WASM 的 invoiceBatchExport：复制到剪贴板只需要文本，
+ * 让 50MB 的模块再序列化一遍纯属浪费。下载走 WASM，那边导出的 CSV 带 BOM
+ * 与合计行，JS 侧拼不出来。
+ */
 function invoiceJSON() {
-  const source = state.results.invoice || {};
-  const { source: fileName, ...rest } = source;
-  return JSON.stringify({
-    schema: 'ofd-toolbox/invoice',
-    extracted_from: fileName,
-    invoice: rest,
-  }, null, 2);
+  const batch = state.results.invoiceBatch;
+  if (!batch) return '';
+  return JSON.stringify({ schema: 'ofd-toolbox/invoices', batch }, null, 2);
 }
 
-/** exportInvoiceJSON 下载 JSON。 */
+/** exportInvoiceResult 下载指定格式的报表。 */
+async function exportInvoiceResult(format) {
+  if (!invoiceBatchID) return;
+  try {
+    const result = await call('invoiceBatchExport', invoiceBatchID, format);
+    downloadBlob(new Blob([result.data], { type: result.mime }), result.name);
+  } catch (error) {
+    showNotice(`导出失败：${error.message}`, true);
+  }
+}
+
+/** exportInvoiceJSON 下载整批 JSON。 */
 function exportInvoiceJSON() {
-  if (!state.results.invoice) return;
-  const base = (state.results.invoice.source || 'invoice').replace(/\.[^.]+$/, '');
-  downloadBlob(new Blob([invoiceJSON()], { type: 'application/json' }),
-    `${base}.json`);
+  return exportInvoiceResult('json');
+}
+
+/** exportInvoiceCSV 下载整批 CSV 报表。 */
+function exportInvoiceCSV() {
+  return exportInvoiceResult('csv');
+}
+
+/** exportInvoiceXLSX 下载整批 XLSX 报表。 */
+function exportInvoiceXLSX() {
+  return exportInvoiceResult('xlsx');
 }
 
 /** copyInvoiceJSON 复制 JSON 到剪贴板。 */
 async function copyInvoiceJSON() {
-  if (!state.results.invoice) return;
+  if (!state.results.invoiceBatch) return;
   try {
     await navigator.clipboard.writeText(invoiceJSON());
     showNotice('已复制到剪贴板。');
@@ -2853,7 +3530,7 @@ function bindEvents() {
 }
 
 /** selectTab 切换工具页。 */
-function selectTab(name) {
+function selectTab(name, { persist = true } = {}) {
   state.tab = name;
   for (const tab of document.querySelectorAll('.tab')) {
     const active = tab.dataset.tab === name;
@@ -2863,7 +3540,45 @@ function selectTab(name) {
   for (const panel of document.querySelectorAll('.panel')) {
     panel.classList.toggle('is-active', panel.dataset.panel === name);
   }
+  if (persist) rememberTab(name);
   renderToolBody();
+}
+
+/** TAB_KEY 是记住上次停留标签页的存储键。 */
+const TAB_KEY = 'ofd-toolbox.tab';
+
+/**
+ * rememberTab 记住当前标签页。
+ *
+ * 存的是标签名而不是下标：标签顺序调整后下标会指向别的页，而名字对得上。
+ * 写失败（隐私模式、配额满）不能影响使用，静默跳过即可。
+ */
+function rememberTab(name) {
+  try {
+    localStorage.setItem(TAB_KEY, name);
+  } catch {
+    // 存不下就当没这回事，下次仍然从转换页开始。
+  }
+}
+
+/**
+ * restoreTab 回到上次停留的标签页。
+ *
+ * 读出来的值必须对着真实存在的标签校验：localStorage 是跨版本留存的，
+ * 删掉一个标签或改个名字之后，旧值会让页面停在一个不存在的面板上，
+ * 表现是所有内容都空着。正好也覆盖了存储被写坏的情况。
+ */
+function restoreTab() {
+  let saved = '';
+  try {
+    saved = localStorage.getItem(TAB_KEY) || '';
+  } catch {
+    return 'convert';
+  }
+  if (!saved) return 'convert';
+  const exists = [...document.querySelectorAll('.tab')]
+    .some((tab) => tab.dataset.tab === saved);
+  return exists ? saved : 'convert';
 }
 
 /**
@@ -2951,17 +3666,62 @@ async function main() {
 
   try {
     await ready;
-    boot.hidden = true;
     state.capabilities = await call('capabilities');
     state.options = {};
     renderFiles();
     renderFormatGrid();
     renderOptions();
+    // 恢复上次停留的标签页。不走 persist：刚读出来的值再写回去没有意义，
+    // 而读失败时它已经被降级成 convert，那正是默认值。
+    selectTab(restoreTab(), { persist: false });
+    // 从 IndexedDB 恢复上次上传的字体，用户不必每次刷新都重新上传。
+    await restorePersistedFonts();
+    // 遮罩最后才收：放在渲染之前的话，"启动完成"到"界面就位"之间有一段
+    // 空档，那期间读到的是默认的转换页——标签页恢复就白做了。
+    boot.hidden = true;
   } catch (cause) {
     boot.querySelector('.boot-note').textContent = '引擎载入失败';
     error.hidden = false;
     error.textContent = cause.message;
     document.getElementById('boot-status').textContent = '';
+  }
+}
+
+/**
+ * restorePersistedFonts 从 IndexedDB 恢复上次上传的字体族。
+ *
+ * 字体字节存在 IndexedDB 里，刷新页面后 wasm 进程重建、内存注册表清空，
+ * 但 IndexedDB 还在。启动时读出来重新注册，用户只上传一次。
+ *
+ * 恢复失败不阻塞启动：IndexedDB 不可用（隐私模式、配额满）时降级成
+ * "本次会话未注册字体"，用户仍可手动上传。
+ */
+async function restorePersistedFonts() {
+  let entries;
+  try {
+    entries = await loadPersistedFonts();
+  } catch (error) {
+    console.warn('读取已存字体失败：', error);
+    return;
+  }
+  if (!entries.length) return;
+  let restored = 0;
+  for (const entry of entries) {
+    try {
+      await call('addFallbackFont', entry.data, entry.family,
+        entry.weight, entry.italic, entry.source || 'upload',
+        entry.name || entry.family);
+      restored++;
+    } catch (error) {
+      console.warn(`恢复字体 ${entry.family} 失败：`, error);
+    }
+  }
+  if (restored) {
+    await syncFallbackFontCount();
+    await refreshFontPanel();
+    renderPreview();
+    refreshInvoicePdfFonts();
+    showNotice(`已恢复 ${restored} 个上次上传的字体。`);
   }
 }
 
@@ -3234,10 +3994,12 @@ function watermarkActionRow() {
  * 让用户去填一堆不会被读取的字段只会误导。
  */
 function syncWatermarkFields() {
-  const form = document.querySelector('.wm-form');
+  // 限定在水印面板子树里，不能用 document.querySelector('.wm-form')：
+  // 发票 Tab 的合并 PDF 区也是 .wm-form，而全局取第一个拿到的是它，
+  // 于是这里会去同步另一个面板的字段。面板被重建时同样会拿到已脱离树的节点。
+  const panel = document.getElementById('watermark');
+  const form = panel && panel.querySelector('.wm-form');
   if (!form) return;
-  // 在表单子树里找而不是 document 全局找：面板可能被重建，
-  // 而全局 querySelector 会拿到上一个文档里已脱离树的节点。
   // querySelectorAll 返回的是 NodeList，没有 find；必须先展开成数组。
   const checked = (name) => form.querySelector(`input[name="${name}"]:checked`)
     || [...form.querySelectorAll(`input[name="${name}"]`)]
@@ -3794,6 +4556,195 @@ function toggleFontPanel() {
   if (!panel.hidden) refreshFontPanel();
 }
 
+/**
+ * 字体持久化：把用户上传的字体族存进 IndexedDB，刷新后自动恢复注册。
+ *
+ * 用 IndexedDB 而不是 localStorage：中文字体动辄十几 MB，localStorage 的
+ * 5–10 MB 额度放不下，而且同步 API 会阻塞主线程。
+ *
+ * 与 app.js 其余部分一样按经典脚本内联：页面是 <script src="app.js">，
+ * 拆模块要同时改 index.html 与测试桩的注入签名，收益不抵代价。
+ *
+ * 不可用时（隐私模式、配额满、测试环境）全部降级为空操作：字体仍注册进引擎，
+ * 只是刷新后需要重新上传。为了这个丢一次注册比让整个流程失败要好。
+ */
+/**
+ * fontDisplayName 从字体字节里读出它的真实名字。
+ *
+ * 上传时此前直接用文件名（smiley.ttf），界面与日志里就只有一个文件名，
+ * 看不出到底是哪个字体——同一个文件可能装着一整套字重，而中文名的字体
+ * （得意黑、思源宋体）往往叫一个完全不同的西文文件名。
+ *
+ * 读的是 sfnt 的 name 表：TrueType/OpenType 通用，.ttf/.otf/.ttc 都适用。
+ * 读不出来时返回 ''，由调用方退回文件名——解析失败不该让整个注册失败。
+ */
+function fontDisplayName(bytes) {
+  try {
+    if (bytes.length < 12) return '';
+    // TTC：头 4 字节是 'ttcf'，第 8 字节起是各字体偏移，取第一个。
+    let base = 0;
+    if (String.fromCharCode(...bytes.subarray(0, 4)) === 'ttcf') {
+      base = readU32(bytes, 12);
+      if (base + 12 > bytes.length) return '';
+    }
+    const numTables = readU16(bytes, base + 4);
+    let nameTable = -1;
+    for (let index = 0; index < numTables; index++) {
+      const entry = base + 12 + index * 16;
+      if (entry + 16 > bytes.length) return '';
+      if (String.fromCharCode(...bytes.subarray(entry, entry + 4)) === 'name') {
+        nameTable = readU32(bytes, entry + 8);
+        break;
+      }
+    }
+    if (nameTable < 0 || nameTable + 6 > bytes.length) return '';
+    const count = readU16(bytes, nameTable + 2);
+    const storage = nameTable + readU16(bytes, nameTable + 4);
+    // 按优先级挑一条：先要家族名（1），再用全名（4），最后 PostScript 名（6）。
+    // 平台优先 Windows/Unicode：中文字体的中文名通常只登记在这里。
+    const wantIDs = [1, 4, 6];
+    const langPref = [0x804, 0x409, 0];
+    let best = '';
+    let bestRank = -1;
+    for (let index = 0; index < count; index++) {
+      const record = nameTable + 6 + index * 12;
+      if (record + 12 > bytes.length) break;
+      const platform = readU16(bytes, record);
+      const encoding = readU16(bytes, record + 2);
+      const language = readU16(bytes, record + 4);
+      const nameID = readU16(bytes, record + 6);
+      const length = readU16(bytes, record + 8);
+      const offset = readU16(bytes, record + 10);
+      const idRank = wantIDs.indexOf(nameID);
+      if (idRank < 0) continue;
+      const start = storage + offset;
+      if (start + length > bytes.length) continue;
+      let text;
+      // 平台 0（Unicode）与平台 3/编码 1（Unicode BMP）按 UTF-16BE 解，
+      // 平台 1（Mac Roman）是单字节。
+      if (platform === 3 && encoding === 1 || platform === 0) {
+        text = readUTF16BE(bytes, start, length);
+      } else if (platform === 1) {
+        text = String.fromCharCode(...bytes.subarray(start, start + length));
+      } else {
+        continue;
+      }
+      text = text.trim();
+      if (!text) continue;
+      const langRank = langPref.indexOf(language);
+      if (langRank < 0) continue;
+      // idRank 必须主导：家族名(1)至今优于全名(4)至今优于 PostScript 名(6)，
+      // 语言只在前者打平时做取舍。此前把两项直接相加，结果 PostScript 名
+      // 常常因为撞上一个更匹配的语言而胜出，界面显示 "DejaVuSerif"。
+      const rank = (wantIDs.length - idRank) * 100 - langRank;
+      if (rank > bestRank) {
+        bestRank = rank;
+        best = text;
+      }
+    }
+    return best;
+  } catch {
+    return '';
+  }
+}
+
+function readU16(bytes, at) {
+  return (bytes[at] << 8) | bytes[at + 1];
+}
+
+function readU32(bytes, at) {
+  return ((bytes[at] << 24) | (bytes[at + 1] << 16)
+    | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+}
+
+function readUTF16BE(bytes, start, length) {
+  let text = '';
+  for (let at = start; at + 1 < start + length; at += 2) {
+    text += String.fromCharCode(readU16(bytes, at));
+  }
+  return text;
+}
+
+const FONT_DB_NAME = 'ofd-toolbox';
+const FONT_DB_VERSION = 1;
+const FONT_STORE_NAME = 'fonts';
+
+/** openFontDB 打开字体库，失败时 reject（由调用方决定是否降级）。 */
+function openFontDB() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB 不可用'));
+      return;
+    }
+    const request = indexedDB.open(FONT_DB_NAME, FONT_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(FONT_STORE_NAME)) {
+        // 族名作键：同一族重复上传只留最新那份字节。
+        db.createObjectStore(FONT_STORE_NAME, { keyPath: 'family' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * savePersistedFont 写入一个字体族。
+ *
+ * name 与 source 都只是展示信息，但都要存：恢复时缺了 name，日志里又是
+ * 一片 name=""；缺了 source，本机字体会被显示成"上传"。
+ */
+async function savePersistedFont(family, weight, italic, data, name, source) {
+  let db;
+  try {
+    db = await openFontDB();
+  } catch {
+    console.warn('IndexedDB 不可用，字体不会持久化');
+    return;
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_STORE_NAME, 'readwrite');
+    tx.objectStore(FONT_STORE_NAME)
+      .put({ family, name, weight, italic, data, source: source || 'upload' });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+/** removePersistedFont 从存储删掉一个字体族。 */
+async function removePersistedFont(family) {
+  let db;
+  try {
+    db = await openFontDB();
+  } catch {
+    console.warn('IndexedDB 不可用，存储里的旧字体仍在');
+    return;
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_STORE_NAME, 'readwrite');
+    tx.objectStore(FONT_STORE_NAME).delete(family);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+/** loadPersistedFonts 读出全部已存字体族。 */
+async function loadPersistedFonts() {
+  let db;
+  try {
+    db = await openFontDB();
+  } catch {
+    return [];
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_STORE_NAME, 'readonly');
+    const request = tx.objectStore(FONT_STORE_NAME).getAll();
+    request.onsuccess = () => { db.close(); resolve(request.result || []); };
+    request.onerror = () => { db.close(); reject(request.error); };
+  });
+}
+
 /** refreshFontPanel 重画字体面板。 */
 async function refreshFontPanel() {
   await renderFontDoc();
@@ -3861,7 +4812,7 @@ async function renderFontRegistry() {
     const item = document.createElement('li');
     const name = document.createElement('span');
     const sourceLabel = font.source === 'local' ? '本机' : '上传';
-    name.textContent = `${font.family}（${formatBytes(font.size)}，${sourceLabel}）`;
+    name.textContent = `${fontDisplayLabel(font)}（${formatBytes(font.size)}，${sourceLabel}）`;
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'ghost';
@@ -3871,17 +4822,20 @@ async function renderFontRegistry() {
     list.append(item);
   }
   host.append(list);
-  host.append(note('字体字节注册后留在引擎的全局表里，移除只让后续渲染不再使用它，'
-    + '内存不会回落。'));
+  host.append(note('字体已存入浏览器，刷新后自动恢复。移除会同时清掉存储，'
+    + '已打开的文档要等关闭后才真正释放内存。'));
 }
 
 /** removeFallbackFont 移除一个回退字体族。 */
 async function removeFallbackFont(family) {
   try {
     await call('removeFallbackFont', family);
+    // 存储要跟着删：留着的话下次刷新又会把这族字体恢复回来，白删。
+    await removePersistedFont(family);
     await syncFallbackFontCount();
     await refreshFontPanel();
     renderPreview();
+    refreshInvoicePdfFonts();
   } catch (error) {
     showNotice(`移除字体失败：${error.message}`, true);
   }
@@ -3917,6 +4871,43 @@ function normalizeFontFamily(name) {
     .toLowerCase()
     .replace(/[\s_-]+/g, '')
     .replace(/(regular|bold|italic|light|medium|semibold|black|thin)$/g, '');
+}
+
+/**
+ * chineseFontAlias 反查族名的中文名（宋体、楷体、仿宋等）。
+ *
+ * 上传的字体文件里通常只有英文名（SimSun、FangSong），中文名是操作系统的
+ * 本地化名，不在文件里——从 name 表读不出来。但渲染引擎按等价组匹配字体，
+ * 同一组的中英文名本就互通，界面因此可以拿中文名指向用户，而不是甩一个
+ * 文件名或 PostScript 名。
+ */
+function chineseFontAlias(family) {
+  const normalized = normalizeFontFamily(family);
+  if (!normalized) return '';
+  for (const names of Object.values(fontFamilyGroups)) {
+    if (!names.map(normalizeFontFamily).includes(normalized)) continue;
+    // 组表以规范中文名开头（宋体、黑体、楷体、仿宋、微软雅黑…），
+    // 取第一个含中文的即可，后面都是别名与变体写法。
+    for (const name of names) {
+      if (/[\u4e00-\u9fff]/.test(name)) return name;
+    }
+  }
+  return '';
+}
+
+/**
+ * fontDisplayLabel 给字体一个用户认得出的标签。
+ *
+ * 族名相同而文件不同的情况很常见（同名字体不同来源、不同字重），所以额外
+ * 信息都要带上；但中文名优先——用户认的是宋体，不是 SimSun 或文件名。
+ */
+function fontDisplayLabel(font) {
+  const family = String(font.family || '');
+  const alias = chineseFontAlias(family);
+  const name = String(font.name || '');
+  const extra = name && name !== family && name !== alias ? name : '';
+  const primary = alias && alias !== family ? `${alias}（${family}）` : family;
+  return extra ? `${primary} · ${extra}` : primary;
 }
 
 /** fontFamilyGroup 返回族名所属的等价组，未收录时返回空串。 */
@@ -4144,7 +5135,14 @@ async function registerSelectedLocalFonts() {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const weight = entry.data.style === 'Bold' ? 700 : 400;
       const italic = String(entry.data.style || '').includes('Italic');
-      await call('addFallbackFont', bytes, entry.family, weight, italic, 'local');
+      // fullName 是原型 getter，必须先取值：下面要把它存进 IndexedDB，
+      // 而 blob() 之类的结构化克隆走不到原型链上。取不到就解析字体字节，
+      // 两条路都空才退回族名。
+      const fontName = entry.data.fullName
+        || fontDisplayName(bytes) || entry.family;
+      await call('addFallbackFont', bytes, entry.family,
+        weight, italic, 'local', fontName);
+      await savePersistedFont(entry.family, weight, italic, bytes, fontName, 'local');
       localFontState.registered.add(entry.family);
       registered++;
     } catch (error) {
@@ -4156,6 +5154,9 @@ async function registerSelectedLocalFonts() {
   await syncFallbackFontCount();
   await refreshFontPanel();
   renderPreview();
+  // 字体列表变了，汇总页的字体下拉框要跟着更新，否则用户刚注册完楷体，
+  // 发票面板里还是"尚未注册任何字体"。
+  refreshInvoicePdfFonts();
   if (failures.length) {
     showNotice(`有 ${failures.length} 个字体注册失败：${failures.join('；')}`, true);
   } else {
@@ -4176,7 +5177,11 @@ async function uploadFallbackFonts(files) {
       // （simsun.ttc、方正小标宋.ttf），匹配得上会优先用这一份；
       // 匹配不上也没关系，它仍会作为兜底被选中。
       const family = file.name.replace(/\.[^.]+$/, '');
-      await call('addFallbackFont', bytes, family, 400, false, 'upload');
+      // 展示名取字体内部的名字而不是文件名：同一个字体文件往往装着多套
+      // 字重，中文名的字体也可能叫个西文文件名。读不出来才退回文件名。
+      const displayName = fontDisplayName(bytes) || file.name;
+      await call('addFallbackFont', bytes, family, 400, false, 'upload', displayName);
+      await savePersistedFont(family, 400, false, bytes, displayName, 'upload');
       done++;
     } catch (error) {
       failures.push(`${file.name}：${error.message}`);
@@ -4185,6 +5190,9 @@ async function uploadFallbackFonts(files) {
   await syncFallbackFontCount();
   await refreshFontPanel();
   renderPreview();
+  // 字体列表变了，汇总页的字体下拉框要跟着更新，否则用户刚注册完楷体，
+  // 发票面板里还是"尚未注册任何字体"。
+  refreshInvoicePdfFonts();
   if (failures.length) {
     host.replaceChildren(note(`有 ${failures.length} 个文件未能注册：${failures.join('；')}`));
   } else if (done) {
