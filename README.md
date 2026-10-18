@@ -16,6 +16,7 @@ Service Worker 缓存与界面。
 | **格式转换** | OFD 转 PDF、PNG/JPG/TIFF、SVG、EPS、TeX、单文件 HTML、纯文本、Markdown、Word；PDF、PNG/JPG/TIFF、Markdown 转 OFD |
 | **文档校验** | 校验 ZIP、XML、引用关系与 XSD，报告可导出为 JSON / Markdown / 纯文本 |
 | **结构分析** | 页面对象、文字、资源、附件、注解、签名与引用关系概览，分章节展开 |
+| **多文件比较** | 选择基准 OFD，其他文件分别比较包内文件、XML、页面文字与画面；预览交互式报告，导出 HTML / JSON / Markdown / 纯文本 |
 | **发票抽取** | 批量读取增值税电子发票 OFD，汇总金额并按销售方、票种、开票月份分组，可导出 JSON / CSV / XLSX |
 | **水印** | 在所选页添加、替换或删除文字/图片水印，支持布局、旋转、透明度和字体 |
 | **文档合并** | ZIP 级合并产出多文档包（保留原有资源与签名摘要），或模型级拼页产出单文档 |
@@ -43,19 +44,39 @@ GOROOT 复制 `wasm_exec.js`，最后按各资源的内容哈希重算 `service-
 
 `make help` 列出全部目标。
 
+比较功能的回归测试（生成临时样本，在隔离 Worker 中运行真实 WASM）：
+
+```bash
+make build-wasm
+node --test cmd/toolbox-wasm/tests/compare.test.mjs
+```
+
 ## 架构
 
 ```
 cmd/toolbox-wasm/
 ├── *.go            WASM 侧命令，每个文件带 //go:build js && wasm
 └── web/            页面资源（无框架、无构建步骤，直接就是浏览器要的东西）
-    ├── index.html  单页，7 个工具 Tab
+    ├── index.html  单页，8 个工具 Tab
     ├── app.js      主线程：界面、状态、Worker 消息
     ├── worker.js   Worker：WASM 装载、命令分发、流式产物接收
+    ├── compare-fs.js  比较输入的只读内存文件适配
     └── toolbox.wasm  构建产物，50MB 量级，不入库
 ```
 
 几个不显眼但影响体验的决定：
+
+**多文件比较。** 加入至少两个 OFD 后打开「比较」，勾选输入并选择基准文件。
+默认比较包内文件、XML 结构与页面文字，可开启画面比较，调整 DPI、像素容差和
+最小变化区域。页面支持自动匹配、按页码匹配及手工映射（如 `2:3,4:5`）。
+页码范围分别应用于各输入，包内文件始终覆盖整包；手工映射应用于每个目标。
+报告可直接预览或下载为独立 HTML，其他格式从最近一次报告导出，无需重新比较。
+
+库的 `compare.CompareFiles` 接收文件路径，Worker 因此把输入挂成只读内存文件，
+任务完成、失败或取消后释放；不写磁盘。报告沿用分块传输，WASM 只缓存最新一份。
+单次最多 64 份、输入总计 256 MiB；预览图预算为 16 MiB，报告预算为 64 MiB，
+累计视觉渲染预算为 1 亿像素，超限会明确报错。当前比较引擎只使用文档内嵌字体，
+尚未接入工具箱注册的回退字体；缺少内嵌字体时画面可能缺字，文字差异仍正常比较。
 
 **WASM 跑在 Worker 里。** 模块有 50MB 量级，装载和计算都在主线程的话页面会
 长时间不可交互——进度条卡住、取消按钮点不动、滚动条卡死。
@@ -97,11 +118,12 @@ cmd/toolbox-wasm/
 
 | workflow | 触发 | 做什么 |
 |----------|------|--------|
-| `.github/workflows/go.yml` | push / PR 到 `main` | `go mod tidy` 漂移检查、`go vet`、js/wasm 构建、`make build-wasm` |
+| `.github/workflows/go.yml` | push / PR 到 `main` | `go mod tidy` 漂移检查、`go vet`、js/wasm 构建、`make build-wasm`、比较回归测试 |
 | `.github/workflows/pages.yml` | `main` 上特定路径变化 / 手动 | 装 binaryen 133、优化构建、发布到 GitHub Pages |
 
-两个 workflow 都不跑测试：`cmd/toolbox-wasm/web/test/` 与 `browser-test/`
-目前尚未入库，`make test` 在干净检出的仓库里必然失败。测试代码入库后补上。
+CI 运行已入库的 `cmd/toolbox-wasm/tests/compare.test.mjs`。
+`cmd/toolbox-wasm/web/test/` 与 `browser-test/` 目前尚未入库，
+`make test` 中的完整本地测试需要这些文件。
 
 `go.yml` 不装 binaryen——未优化的 WASM 足够证明能编译，而要发布的才是优化过
 的产物。`pages.yml` 装官方 release 的预编译 binaryen，不用 apt 的：noble 源里

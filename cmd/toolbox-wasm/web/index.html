@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OFD 工具箱</title>
-<meta name="description" content="在浏览器里转换与检查 OFD 文档：OFD 与 PDF 互转、格式导出、文档校验、结构分析、发票抽取、水印、合并与长期保存。全部在本地完成，文件不上传。">
+<meta name="description" content="在浏览器里转换与检查 OFD 文档：OFD 与 PDF 互转、格式导出、文档校验、结构分析、多文件比较、发票抽取、水印、合并与长期保存。全部在本地完成，文件不上传。">
 <link rel="stylesheet" href="toolbox.css">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#2476bd">
@@ -41,6 +41,7 @@
     <button class="tab is-active" role="tab" data-tab="convert" aria-selected="true">转换</button>
     <button class="tab" role="tab" data-tab="validate" aria-selected="false">校验</button>
     <button class="tab" role="tab" data-tab="analyze" aria-selected="false">分析</button>
+    <button class="tab" role="tab" data-tab="compare" aria-selected="false">比较</button>
     <button class="tab" role="tab" data-tab="invoice" aria-selected="false">发票</button>
     <button class="tab" role="tab" data-tab="watermark" aria-selected="false">水印</button>
     <button class="tab" role="tab" data-tab="merge" aria-selected="false">合并</button>
@@ -113,6 +114,17 @@
       </div>
       <div id="analyze" class="tool-body">
         <p class="hint">载入 OFD 后点击「开始分析」。</p>
+      </div>
+    </div>
+
+    <!-- 比较 -->
+    <div class="panel" data-panel="compare">
+      <div class="work-head">
+        <h2>多文件比较</h2>
+        <p class="work-note">选择一份基准 OFD，其他文件分别与它比较包内文件、XML、页面文字与画面。</p>
+      </div>
+      <div id="compare" class="tool-body">
+        <p class="hint">把两个以上 OFD 加入文件队列后开始比较。</p>
       </div>
     </div>
 
@@ -227,7 +239,7 @@
   <p>全部处理在本机浏览器内完成，文件不会上传到任何服务器。</p>
   <p>基于 <a href="https://github.com/zc310/ofd" target="_blank" rel="noopener noreferrer">zc310/ofd</a>
      构建的 WebAssembly 引擎，支持 OFD 与 PDF 互转、图像与文本导出、文档校验、
-     结构分析、发票抽取、水印、合并与长期保存处理。</p>
+     结构分析、多文件比较、发票抽取、水印、合并与长期保存处理。</p>
   <p class="warn">本工具不保证解析或转换结果适用于特定业务、法律与合规场景。
      电子签名的有效性需要用 OFD 阅读器另行核验。</p>
   <p>纯浏览器环境无法运行 LibreOffice、Chrome 与 Tesseract，

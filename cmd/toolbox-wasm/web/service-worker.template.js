@@ -21,6 +21,7 @@ const SHELL = [
   './index.html',
   './app.js',
   './worker.js',
+  './compare-fs.js',
   './toolbox.css',
   './wasm_exec.js',
   './toolbox.wasm',

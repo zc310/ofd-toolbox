@@ -4,7 +4,7 @@ go 1.26.4
 
 replace github.com/lumifloat/tinyskia => github.com/zc310/tinyskia v0.0.0-20260923132319-d6ae6947b9ac
 
-require github.com/zc310/ofd v0.1.5-0.20261016023753-44ed93a7e92d
+require github.com/zc310/ofd v0.1.5-0.20261018085438-f273dee5aafa
 
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0 // indirect
@@ -33,7 +33,7 @@ require (
 	github.com/knroy/go-xml v1.8.1 // indirect
 	github.com/kovidgoyal/go-parallel v1.1.1 // indirect
 	github.com/kovidgoyal/go-shm v1.0.0 // indirect
-	github.com/kovidgoyal/imaging v1.8.24-0.20261007033220-40391a359a37 // indirect
+	github.com/kovidgoyal/imaging v1.9.0 // indirect
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12 // indirect
 	github.com/pdfcpu/pdfcpu v0.16.2 // indirect
@@ -53,7 +53,6 @@ require (
 	github.com/yuin/goldmark v1.8.6 // indirect
 	github.com/zc310/canvas v0.0.0-20261016023101-3d1af32f0be3 // indirect
 	github.com/zc310/font v0.0.0-20261015234500-7f44c41494e0 // indirect
-	github.com/zc310/fontfix v0.0.3-0.20261015114432-41511c942370 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect

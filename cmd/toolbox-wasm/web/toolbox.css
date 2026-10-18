@@ -1390,6 +1390,20 @@ table.report td:nth-child(5) { max-width: 260px; }
    所以要在容器外面补。与长期保存同为 16px。 */
 .merge-body + .tool-actions { margin-top: 16px; }
 
+/* 比较报告复用库的交互式报告，内部可切换文件、XML、文字和画面对照。 */
+.compare-inputs, .compare-form { display: grid; gap: 12px; margin-bottom: 16px; }
+.compare-inputs .wm-check { overflow-wrap: anywhere; }
+.compare-form .wm-fields[hidden] { display: none; }
+#compare-result .tool-actions { margin: 16px 0; }
+.compare-preview {
+  display: block;
+  width: 100%;
+  min-height: 480px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 /* 合并 PDF 产物区里「下载 PDF」按钮与上方结果条的间距。同一类问题：
    .tool-actions 没有 margin-top，按钮直接贴住上方容器的下边框。
    与合并、长期保存面板的 16px 一致。 */

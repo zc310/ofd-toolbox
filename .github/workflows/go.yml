@@ -4,9 +4,7 @@
 # ——未优化的 WASM 足够证明能编译，而 Pages 那条要发布的才是优化过的产物。
 # 发布走 pages.yml，只在 main 分支的特定路径变化时触发。
 #
-# 当前版本不提交测试代码（cmd/toolbox-wasm/web/test/ 与 browser-test/ 均未入库），
-# 所以这里不跑 make test：那个目标指向未入库的文件，在干净检出的仓库里必然
-# 报"找不到 *.test.mjs"。测试代码入库后，把下面 Test 那一步加回来即可。
+# 完整本地测试尚未入库；这里直接运行已入库的 WASM 比较回归测试。
 name: Go
 
 on:
@@ -68,3 +66,11 @@ jobs:
       # 本机没装 wasm-opt 时它会告警并改用未优化版本，那不算失败。
       - name: Build WASM
         run: make build-wasm
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Test compare
+        run: node --test cmd/toolbox-wasm/tests/compare.test.mjs

@@ -77,6 +77,11 @@ const state = {
   mergeInputs: [],
   /** mergeResult 是最近一次合并的产物。 */
   mergeResult: null,
+  /** null 默认选入队列内全部 OFD；数组记录用户明确选择的文件 ID。 */
+  compareInputs: null,
+  compareResult: null,
+  compareURL: '',
+  compareResizeObserver: null,
   /** preserveResult 是最近一次长期保存转换的产物。 */
   preserveResult: null,
   /** preservePlan 是最近一次预检结果，用于判断是否需要先给用户看改动。 */
@@ -181,6 +186,7 @@ function convert(payload, onProgress) {
     const cleanup = () => worker.removeEventListener('message', handle);
     const finish = (fn, value) => {
       cleanup();
+      pending.delete(id);
       state.activeJobID = 0;
       fn(value);
     };
@@ -628,6 +634,8 @@ async function removeFile(id) {
   }
   // 合并输入按文件 ID 记录，去掉文件后必须同步，否则会指向不存在的输入。
   state.mergeInputs = state.mergeInputs.filter((item) => item !== id);
+  if (state.compareInputs) state.compareInputs = state.compareInputs.filter((item) => item !== id);
+  refreshCompareInputs();
 
   const wasSelected = state.selectedID === id;
   if (wasSelected) {
@@ -785,6 +793,7 @@ async function selectFile(id) {
   resetWatermarkPanel();
   resetMergePanel();
   resetPreservePanel();
+  refreshCompareInputs();
   // 字体面板开着时同步刷新：它上半部分列的是"当前文档的字体"，
   // 换了文件还留着上一个文档的清单，会让人按错字体去做决定。
   const fontPanel = document.getElementById('font-panel');
@@ -2880,13 +2889,14 @@ function renderToolBody() {
   }
   if (state.tab === 'validate' || state.tab === 'analyze'
       || state.tab === 'invoice' || state.tab === 'watermark'
-      || state.tab === 'merge' || state.tab === 'preserve') {
+      || state.tab === 'merge' || state.tab === 'preserve' || state.tab === 'compare') {
     const builders = {
       validate: buildValidatePanel,
       analyze: buildAnalyzePanel,
       invoice: buildInvoicePanel,
       watermark: buildWatermarkPanel,
       merge: buildMergePanel,
+      compare: buildComparePanel,
       preserve: buildPreservePanel,
     };
     if (!host.dataset.built) builders[state.tab](host);
@@ -3605,6 +3615,7 @@ function addFiles(files) {
   }
   renderFiles();
   if (added.length) selectFile(added[added.length - 1].id);
+  refreshCompareInputs();
 }
 
 // ——— 启动 ———
@@ -5677,6 +5688,201 @@ function mergeNote() {
     box.append(node);
   }
   return box;
+}
+
+// ——— 多文件比较 ———
+
+function compareFiles() {
+  return state.files.filter((file) => file.name.toLowerCase().endsWith('.ofd') || file.doc);
+}
+
+function selectedCompareFiles() {
+  return compareFiles().filter((file) => state.compareInputs === null || state.compareInputs.includes(file.id));
+}
+
+function buildComparePanel(host) {
+  host.replaceChildren();
+  host.dataset.built = '1';
+  const inputs = document.createElement('div');
+  inputs.id = 'compare-inputs';
+  inputs.className = 'compare-inputs';
+  const form = document.createElement('form');
+  form.id = 'compare-form';
+  form.className = 'compare-form';
+  const fields = document.createElement('div');
+  fields.className = 'wm-fields';
+  fields.append(
+    selectField('compare-baseline', '基准文件', [], ''),
+    selectField('compare-match', '页面匹配', [
+      { value: 'auto', label: '自动匹配内容与文字' },
+      { value: 'number', label: '按页码顺序' },
+    ], 'auto'),
+    textField('compare-pages', '页码范围（留空为全部，如 1-3,5）', ''),
+    textField('compare-map', '手工页映射（基准:目标，如 2:3,4:5）', ''),
+  );
+  const visual = checkboxField('compare-visual', '同时比较画面并生成预览图');
+  const visualFields = document.createElement('div');
+  visualFields.id = 'compare-visual-fields';
+  visualFields.className = 'wm-fields';
+  visualFields.append(
+    numberField('compare-dpi', '画面 DPI', 72, 10, 300, 1),
+    numberField('compare-tolerance', '像素容差（每通道）', 0, 0, 255, 1),
+    numberField('compare-region', '最小变化区域像素数', 1, 1, 10000000, 1),
+  );
+  const actions = document.createElement('div');
+  actions.className = 'tool-actions';
+  const start = actionButton('开始比较', runCompare);
+  start.id = 'compare-start';
+  actions.append(start);
+  form.append(fields, visual, visualFields, actions);
+  form.addEventListener('submit', (event) => { event.preventDefault(); runCompare(); });
+  form.addEventListener('change', syncCompareFields);
+  const result = document.createElement('div');
+  result.id = 'compare-result';
+  result.className = 'report-host';
+  host.append(inputs, form,
+    note('页面范围分别应用于各输入；包内文件始终按整包比较。手工页映射适用于自动匹配，并应用于每个目标。'),
+    note('画面比较使用文档内嵌字体；当前比较引擎尚未接入工具箱的回退字体，未嵌入字体的文字可能无法显示。文字差异仍可正常比较。'),
+    result);
+  refreshCompareInputs();
+  if (state.compareResult) renderCompareResult(state.compareResult);
+}
+
+function refreshCompareInputs() {
+  const host = document.getElementById('compare-inputs');
+  const baseline = document.getElementById('wm-compare-baseline');
+  if (!host || !baseline) return;
+  const previous = baseline.value;
+  host.replaceChildren();
+  const files = compareFiles();
+  if (!files.length) host.append(note('请加入至少两个 OFD 文件。'));
+  for (const file of files) {
+    const field = checkboxField(`compare-input-${file.id}`, `${file.name} · ${formatBytes(file.size)}`,
+      state.compareInputs === null || state.compareInputs.includes(file.id));
+    const input = field.querySelector('input');
+    input.addEventListener('change', () => {
+      const picked = new Set(selectedCompareFiles().map((item) => item.id));
+      if (input.checked) picked.add(file.id); else picked.delete(file.id);
+      state.compareInputs = [...picked];
+      refreshCompareInputs();
+    });
+    host.append(field);
+  }
+  baseline.replaceChildren();
+  for (const file of selectedCompareFiles()) baseline.append(optionNode(String(file.id), file.name));
+  if ([...baseline.options].some((option) => option.value === previous)) baseline.value = previous;
+  syncCompareFields();
+}
+
+function syncCompareFields() {
+  const form = document.getElementById('compare-form');
+  if (!form) return;
+  const visual = document.getElementById('wm-compare-visual').checked;
+  const visualFields = document.getElementById('compare-visual-fields');
+  visualFields.hidden = !visual;
+  for (const input of form.querySelectorAll('input, select, button')) input.disabled = state.busy;
+  for (const input of visualFields.querySelectorAll('input')) input.disabled = !visual || state.busy;
+  const pageMap = document.getElementById('wm-compare-map');
+  pageMap.disabled = state.busy || document.getElementById('wm-compare-match').value !== 'auto';
+  for (const input of document.querySelectorAll('#compare-inputs input')) input.disabled = state.busy;
+  document.getElementById('compare-start').disabled = state.busy || selectedCompareFiles().length < 2;
+}
+
+async function runCompare() {
+  if (state.busy) return;
+  const files = selectedCompareFiles();
+  if (files.length < 2) return;
+  const form = document.getElementById('compare-form');
+  if (!form.reportValidity()) return;
+  const value = (key) => document.getElementById(`wm-compare-${key}`).value;
+  const visual = document.getElementById('wm-compare-visual').checked;
+  const pageMatch = value('match');
+  const options = {
+    baseline: files.findIndex((file) => String(file.id) === value('baseline')),
+    pageMatch, pages: value('pages'), pageMap: pageMatch === 'auto' ? value('map') : '', visual,
+    dpi: visual ? Number(value('dpi')) : 72,
+    pixelTolerance: visual ? Number(value('tolerance')) : 0,
+    minRegionPixels: visual ? Number(value('region')) : 1,
+  };
+  state.busy = true;
+  syncCompareFields();
+  setTask('读取比较文件', 0, true);
+  try {
+    if (files.length > 64 || files.reduce((size, file) => size + file.size, 0) > 256 * 1024 * 1024) {
+      throw new Error('单次比较最多 64 个文件，输入总大小不能超过 256 MB');
+    }
+    const inputs = [];
+    for (const file of files) inputs.push(new Uint8Array(await file.file.arrayBuffer()));
+    const result = await convert({ command: 'compare', inputs, names: files.map((file) => file.name), ...options },
+      (progress) => setTask(progress.phase === 'writing' ? '生成比较报告' : '比较中', 0, true));
+    if (state.compareURL) URL.revokeObjectURL(state.compareURL);
+    state.compareURL = '';
+    state.compareResult = result;
+    renderCompareResult(result);
+    finishTask('比较完成', `${result.comparisons.length} 个目标文件`);
+  } catch (error) {
+    finishTask(error.code === 'cancelled' ? '已取消比较' : '比较失败', error.message);
+  } finally {
+    state.busy = false;
+    syncCompareFields();
+  }
+}
+
+function renderCompareResult(result) {
+  const host = document.getElementById('compare-result');
+  if (!host) return;
+  if (state.compareResizeObserver) state.compareResizeObserver.disconnect();
+  host.replaceChildren();
+  const title = document.createElement('div');
+  title.className = 'group-title';
+  title.textContent = `最近一次比较 · 基准：${result.baseline}`;
+  host.append(title, simpleTable(['目标文件', '整体', '所选页面', '文件新增 / 删除 / 修改 / 移动', '页面新增 / 删除 / 修改 / 移动'],
+    result.comparisons.map((item) => [item.name, item.equal ? '相同' : '有差异', item.pagesEqual ? '相同' : '有差异',
+      [item.summary.files_added, item.summary.files_removed, item.summary.files_modified, item.summary.files_moved].join(' / '),
+      [item.summary.pages_added, item.summary.pages_removed, item.summary.pages_modified, item.summary.pages_moved].join(' / ')])));
+  const actions = document.createElement('div');
+  actions.className = 'tool-actions';
+  actions.append(actionButton('下载 HTML 报告', () => downloadBlob(result.blob, result.name)));
+  for (const [format, label] of [['json', 'JSON'], ['markdown', 'Markdown'], ['text', '文本']]) {
+    const button = actionButton(`导出 ${label}`, () => exportCompareReport(result.reportId, format));
+    button.className = 'ghost';
+    actions.append(button);
+  }
+  const frame = document.createElement('iframe');
+  frame.id = 'compare-preview';
+  frame.className = 'compare-preview';
+  frame.title = 'OFD 比较报告：文件、XML、文字和画面差异';
+  frame.setAttribute('sandbox', 'allow-scripts allow-downloads');
+  if (!state.compareURL) state.compareURL = URL.createObjectURL(new Blob([result.blob], { type: 'text/html' }));
+  frame.src = state.compareURL;
+  host.append(actions, frame);
+  // 工作区已经扣除了顶栏、文件区和任务栏；直接取它的内容高度，避免固定 vh
+  // 在 Firefox、窗口缩放或窄屏任务栏换行后留下底部空白。
+  const work = document.getElementById('work');
+  const resizePreview = () => {
+    const style = getComputedStyle(work);
+    frame.style.height = `${work.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)}px`;
+  };
+  resizePreview();
+  state.compareResizeObserver = new ResizeObserver(resizePreview);
+  state.compareResizeObserver.observe(work);
+}
+
+async function exportCompareReport(reportId, format) {
+  if (state.busy) return;
+  state.busy = true;
+  syncCompareFields();
+  setTask('导出比较报告', 0, true);
+  try {
+    const result = await convert({ command: 'compareExport', reportId, format });
+    downloadBlob(new Blob([result.blob], { type: result.mime }), result.name);
+    finishTask('报告已导出');
+  } catch (error) {
+    finishTask(error.code === 'cancelled' ? '已取消导出' : '报告导出失败', error.message);
+  } finally {
+    state.busy = false;
+    syncCompareFields();
+  }
 }
 
 // ——— 长期保存 ———

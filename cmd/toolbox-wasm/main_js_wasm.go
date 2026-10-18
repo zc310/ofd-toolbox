@@ -16,6 +16,7 @@ import (
 	_ "github.com/zc310/ofd/pkg/converter/import/pdf"
 
 	"github.com/zc310/ofd/pkg/analyzer"
+	"github.com/zc310/ofd/pkg/compare"
 	"github.com/zc310/ofd/pkg/invoice"
 	"github.com/zc310/ofd/pkg/validator"
 )
@@ -33,6 +34,8 @@ type wasmApp struct {
 	reports map[uint64]validator.Report
 	// analyses 暂存分析报告，与 reports 同样只保留最新一份。
 	analyses map[uint64]analyzer.Report
+	// comparisons 只保留最新报告，供多种格式重复导出。
+	comparisons map[uint64]*compare.Report
 	// invoiceBatches 暂存批量发票抽取结果。与上面两个一样只保留最新一份：
 	// 每份里带着全部明细行，攒着就是 wasm 内存里的垃圾。
 	invoiceBatches map[uint64]*invoice.Batch
@@ -109,6 +112,9 @@ func main() {
 
 	// 合并。同样是"读入多个文档、产出整个 OFD"，复用同一条流式通道。
 	expose("mergeDocuments", app.mergeDocuments)
+
+	expose("compareDocuments", app.compareDocuments)
+	expose("compareExport", app.compareExport)
 
 	// 长期保存。预检只读、执行才写，因此是两个命令。
 	expose("preservePlan", app.preservePlan)

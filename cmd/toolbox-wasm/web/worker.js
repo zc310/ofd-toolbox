@@ -21,6 +21,7 @@
 // wasm_exec.js 只在 worker 里加载：主线程用不到它，而 Go 的 wasm_exec
 // 会往全局挂 Go 类，两处各加载一份只会带来两份互不相干的全局状态。
 importScripts('wasm_exec.js');
+importScripts('compare-fs.js');
 
 self.addEventListener('error', (event) => {
   console.error('[OFD 工具箱 Worker]', event.error || event.message);
@@ -66,6 +67,8 @@ const STREAM_COMMANDS = {
   merge: 'mergeDocuments',
   preserve: 'preserveApply',
   invoicePdf: 'mergeInvoicePDF',
+  compare: 'compareDocuments',
+  compareExport: 'compareExport',
 };
 
 
@@ -180,12 +183,22 @@ self.onmessage = (event) => {
 /** 启动一次流式任务，把进度与产物接回主线程。 */
 async function runConvert(message) {
   const { id, payload } = message;
+  if (activeJob) {
+    postMessage({ id, error: '已有任务正在运行', code: 'busy' });
+    return;
+  }
   const entry = STREAM_COMMANDS[message.command];
   activeJob = payload.jobId || id;
   sink = createSink(payload.suggestedName || 'output');
 
   const request = { ...payload, jobId: activeJob, streamId: activeJob };
+  let mount;
   try {
+    if (message.command === 'compare') {
+      mount = toolboxCompareFS.mount(request.inputs);
+      request.paths = mount.paths;
+      delete request.inputs;
+    }
     const result = await toolbox[entry](
       request,
       (chunk, sequence) => handleChunk(activeJob, chunk, sequence),
@@ -204,6 +217,7 @@ async function runConvert(message) {
     const cancelled = CANCEL_MESSAGES.some((item) => text.includes(item));
     postMessage({ id, error: text, code: cancelled ? 'cancelled' : 'failed' });
   } finally {
+    if (mount) mount.release();
     activeJob = 0;
     sink = null;
   }

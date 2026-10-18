@@ -34,6 +34,7 @@ GO_SOURCES += $(OFD_SOURCES)
 # 跟踪需要参与缓存名的 shell 资源：wasm 与 worker 必须同版本，否则页面
 # 可能用新 JS 去调旧 wasm。
 WEB_SOURCES := $(WEB_DIR)/index.html $(WEB_DIR)/app.js $(WEB_DIR)/worker.js \
+	$(WEB_DIR)/compare-fs.js \
 	$(WEB_DIR)/toolbox.css $(WEB_DIR)/manifest.webmanifest \
 	$(WEB_DIR)/icon.svg $(WEB_DIR)/icon-192.png $(WEB_DIR)/icon-512.png \
 	$(WEB_DIR)/icon-maskable-192.png $(WEB_DIR)/icon-maskable-512.png \
@@ -154,6 +155,7 @@ TEST_FONT ?= $(shell fc-list -f '%{file}|%{family}\n' 2>/dev/null \
 
 test:
 	@OFD_TOOLBOX_TEST_FONT="$(TEST_FONT)" node cmd/toolbox-wasm/web/test/run.mjs
+	@node --test cmd/toolbox-wasm/tests/compare.test.mjs
 
 # 浏览器测试要真实起 Chrome，比其余测试慢得多，因此不并进 make check：
 # 没有可用 Chrome 的环境（CI 精简镜像）里 check 应当照样能过。
