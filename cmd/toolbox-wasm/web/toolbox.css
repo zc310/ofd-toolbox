@@ -1397,12 +1397,39 @@ table.report td:nth-child(5) { max-width: 260px; }
 #compare-result .tool-actions { margin: 16px 0; }
 .compare-preview {
   display: block;
+  flex: 1;
   width: 100%;
-  min-height: 480px;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
 }
+
+.compare-viewer {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+}
+
+.compare-viewer[open] { display: flex; }
+
+.compare-viewer-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compare-viewer::backdrop { background: var(--surface); }
 
 /* 合并 PDF 产物区里「下载 PDF」按钮与上方结果条的间距。同一类问题：
    .tool-actions 没有 margin-top，按钮直接贴住上方容器的下边框。

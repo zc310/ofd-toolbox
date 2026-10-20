@@ -81,7 +81,6 @@ const state = {
   compareInputs: null,
   compareResult: null,
   compareURL: '',
-  compareResizeObserver: null,
   /** preserveResult 是最近一次长期保存转换的产物。 */
   preserveResult: null,
   /** preservePlan 是最近一次预检结果，用于判断是否需要先给用户看改动。 */
@@ -3536,6 +3535,15 @@ function bindEvents() {
     if (event.target === viewer && typeof viewer.close === 'function') viewer.close();
   });
 
+  const compareViewer = document.getElementById('compare-viewer');
+  const compareViewerClose = document.getElementById('compare-viewer-close');
+  if (compareViewer && compareViewerClose) {
+    compareViewerClose.addEventListener('click', () => compareViewer.close());
+    compareViewer.addEventListener('click', (event) => {
+      if (event.target === compareViewer) compareViewer.close();
+    });
+  }
+
   window.addEventListener('beforeunload', releaseObjectURLs);
 }
 
@@ -5831,7 +5839,6 @@ async function runCompare() {
 function renderCompareResult(result) {
   const host = document.getElementById('compare-result');
   if (!host) return;
-  if (state.compareResizeObserver) state.compareResizeObserver.disconnect();
   host.replaceChildren();
   const title = document.createElement('div');
   title.className = 'group-title';
@@ -5843,29 +5850,17 @@ function renderCompareResult(result) {
   const actions = document.createElement('div');
   actions.className = 'tool-actions';
   actions.append(actionButton('下载 HTML 报告', () => downloadBlob(result.blob, result.name)));
+  actions.append(actionButton('全屏查看报告', () => {
+    document.getElementById('compare-viewer').showModal();
+  }));
   for (const [format, label] of [['json', 'JSON'], ['markdown', 'Markdown'], ['text', '文本']]) {
     const button = actionButton(`导出 ${label}`, () => exportCompareReport(result.reportId, format));
     button.className = 'ghost';
     actions.append(button);
   }
-  const frame = document.createElement('iframe');
-  frame.id = 'compare-preview';
-  frame.className = 'compare-preview';
-  frame.title = 'OFD 比较报告：文件、XML、文字和画面差异';
-  frame.setAttribute('sandbox', 'allow-scripts allow-downloads');
   if (!state.compareURL) state.compareURL = URL.createObjectURL(new Blob([result.blob], { type: 'text/html' }));
-  frame.src = state.compareURL;
-  host.append(actions, frame);
-  // 工作区已经扣除了顶栏、文件区和任务栏；直接取它的内容高度，避免固定 vh
-  // 在 Firefox、窗口缩放或窄屏任务栏换行后留下底部空白。
-  const work = document.getElementById('work');
-  const resizePreview = () => {
-    const style = getComputedStyle(work);
-    frame.style.height = `${work.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)}px`;
-  };
-  resizePreview();
-  state.compareResizeObserver = new ResizeObserver(resizePreview);
-  state.compareResizeObserver.observe(work);
+  document.getElementById('compare-preview').src = state.compareURL;
+  host.append(actions);
 }
 
 async function exportCompareReport(reportId, format) {

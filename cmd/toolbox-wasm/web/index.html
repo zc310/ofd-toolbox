@@ -234,6 +234,15 @@
   <img id="image-viewer-img" alt="预览大图">
 </dialog>
 
+<dialog id="compare-viewer" class="dialog compare-viewer">
+  <div class="compare-viewer-head">
+    <strong>比较报告</strong>
+    <button id="compare-viewer-close" class="ghost" type="button">关闭</button>
+  </div>
+  <iframe id="compare-preview" class="compare-preview" title="OFD 比较报告：文件、XML、文字和画面差异"
+          sandbox="allow-scripts allow-downloads"></iframe>
+</dialog>
+
 <dialog id="about-dialog" class="dialog">
   <h2>关于 OFD 工具箱</h2>
   <p>全部处理在本机浏览器内完成，文件不会上传到任何服务器。</p>
