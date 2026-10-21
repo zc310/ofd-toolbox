@@ -4,7 +4,7 @@ go 1.26.4
 
 replace github.com/lumifloat/tinyskia => github.com/zc310/tinyskia v0.0.0-20260923132319-d6ae6947b9ac
 
-require github.com/zc310/ofd v0.1.5-0.20261020023125-f8f659cae8f8
+require github.com/zc310/ofd v0.1.5-0.20261021031041-7f57e4db491c
 
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0 // indirect
