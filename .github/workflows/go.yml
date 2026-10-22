@@ -34,20 +34,21 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.27"
+          go-version: "stable"
+          check-latest: true
           cache: true
           cache-dependency-path: ofd-toolbox/go.sum
 
-      # ofd 是普通的线上依赖（go.mod 里没有 replace），因此不需要额外签出
-      # 仓库——Go 自己从模块代理取。
-      #
-      # tidy 之后 diff 一遍：go.sum 漏条目会在后面的构建里报 "missing go.sum
-      # entry"，那种错很难一眼看出是锁文件缺东西。这里直接把漂移变成一步失败。
-      - name: Tidy
+      # 每次 CI 都解析 ofd 仓库 main 分支的最新提交。升级后保存快照，再跑 tidy
+      # 并核对快照，这样仍能发现依赖清单不整洁，同时允许锁文件正常更新。
+      - name: Update OFD dependency
         run: |
+          go get github.com/zc310/ofd@main
+          cp go.mod /tmp/go.mod.latest
+          cp go.sum /tmp/go.sum.latest
           go mod tidy
-          git diff --exit-code -- go.mod go.sum || {
-            echo "::error::go.mod / go.sum 与 go mod tidy 的结果不一致，请把 tidy 后的内容提交"
+          diff -u /tmp/go.mod.latest go.mod && diff -u /tmp/go.sum.latest go.sum || {
+            echo "::error::go.mod / go.sum 与 go mod tidy 的结果不一致"
             exit 1
           }
 
@@ -72,5 +73,5 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Test compare
-        run: node --test cmd/toolbox-wasm/tests/compare.test.mjs
+      - name: Test WASM
+        run: node --test cmd/toolbox-wasm/tests/*.test.mjs

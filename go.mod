@@ -2,9 +2,7 @@ module github.com/zc310/ofd-toolbox
 
 go 1.26.4
 
-replace github.com/lumifloat/tinyskia => github.com/zc310/tinyskia v0.0.0-20260923132319-d6ae6947b9ac
-
-require github.com/zc310/ofd v0.1.5-0.20261021031041-7f57e4db491c
+require github.com/zc310/ofd v0.1.6-0.20261022044340-7cbc29f70246
 
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0 // indirect
@@ -29,7 +27,7 @@ require (
 	github.com/h2non/filetype v1.1.3 // indirect
 	github.com/hhrutter/tiff v1.0.7 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
-	github.com/knroy/go-xml v1.8.1 // indirect
+	github.com/knroy/go-xml/v2 v2.0.1 // indirect
 	github.com/kovidgoyal/go-parallel v1.1.1 // indirect
 	github.com/kovidgoyal/go-shm v1.0.0 // indirect
 	github.com/kovidgoyal/imaging v1.9.0 // indirect
@@ -49,8 +47,8 @@ require (
 	github.com/xuri/efp v0.0.2 // indirect
 	github.com/xuri/excelize/v2 v2.11.1-0.20261003002531-6258dcebc4e2 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
-	github.com/yuin/goldmark v1.8.6 // indirect
-	github.com/zc310/canvas v0.0.0-20261019082420-928b491d9262 // indirect
+	github.com/yuin/goldmark/v2 v2.1.8 // indirect
+	github.com/zc310/canvas v0.0.0-20261022020949-10c89b6dc7bf // indirect
 	github.com/zc310/font v0.0.0-20261015234500-7f44c41494e0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect

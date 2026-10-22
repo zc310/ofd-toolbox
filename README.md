@@ -48,7 +48,7 @@ GOROOT 复制 `wasm_exec.js`，最后按各资源的内容哈希重算 `service-
 
 ```bash
 make build-wasm
-node --test cmd/toolbox-wasm/tests/compare.test.mjs
+node --test cmd/toolbox-wasm/tests/*.test.mjs
 ```
 
 ## 架构
@@ -99,29 +99,18 @@ cmd/toolbox-wasm/
 **字体只取本机或用户上传的文件。** 不联网取字体。OFD 未内嵌字体时可以选多个
 本机字体兜底，候选列表会标出哪些能补齐文档缺字、哪些已注册。
 
-## 依赖替换
-
-`go.mod` 里几处 `replace` 必须在**本项目**重新声明——Go 不继承依赖的 replace
-指令，漏掉会编译失败或行为不对：
-
-| 依赖 | 换成 | 原因 |
-|------|------|------|
-| `github.com/tdewolff/font` | `zc310/font` | PDF 输出的字形处理需要 |
-| `github.com/tdewolff/canvas` | `zc310/canvas` | 渐变 `Extend` 等字段在修改版上；版本要与 ofd 侧一致 |
-| `github.com/lumifloat/tinyskia` | `zc310/tinyskia` | 文本排版 |
-| `github.com/kovidgoyal/imaging` | 含 `magick_js.go` 的 pseudo-version | `magick` 子包在 js/wasm 下需要 `go-shm`，上游已合入，等 v1.8.24 发布后可简化为 `v1.8.24` |
-
 `github.com/zc310/ofd` 是普通的线上依赖，没有 replace，因此 CI 不需要额外签出
-该仓库。版本目前固定到具体提交而非 tag，等所需改动发版后改回 `v1.x.y`。
+该仓库。`go.mod` 记录本地开发使用的版本；CI 每次构建前执行
+`go get github.com/zc310/ofd@main`，临时更新到 GitHub `main` 分支的最新提交。
 
 ## 持续集成与发布
 
 | workflow | 触发 | 做什么 |
 |----------|------|--------|
-| `.github/workflows/go.yml` | push / PR 到 `main` | `go mod tidy` 漂移检查、`go vet`、js/wasm 构建、`make build-wasm`、比较回归测试 |
+| `.github/workflows/go.yml` | push / PR 到 `main` | 使用最新稳定版 Go，更新 `ofd@main` 并检查 tidy、`go vet`、js/wasm 构建、`make build-wasm`、WASM 回归测试 |
 | `.github/workflows/pages.yml` | `main` 上特定路径变化 / 手动 | 装 binaryen 133、优化构建、发布到 GitHub Pages |
 
-CI 运行已入库的 `cmd/toolbox-wasm/tests/compare.test.mjs`。
+CI 运行已入库的 `cmd/toolbox-wasm/tests/*.test.mjs`，含比较与 WASM 依赖检查。
 `cmd/toolbox-wasm/web/test/` 与 `browser-test/` 目前尚未入库，
 `make test` 中的完整本地测试需要这些文件。
 

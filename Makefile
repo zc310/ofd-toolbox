@@ -155,7 +155,7 @@ TEST_FONT ?= $(shell fc-list -f '%{file}|%{family}\n' 2>/dev/null \
 
 test:
 	@OFD_TOOLBOX_TEST_FONT="$(TEST_FONT)" node cmd/toolbox-wasm/web/test/run.mjs
-	@node --test cmd/toolbox-wasm/tests/compare.test.mjs
+	@node --test cmd/toolbox-wasm/tests/*.test.mjs
 
 # 浏览器测试要真实起 Chrome，比其余测试慢得多，因此不并进 make check：
 # 没有可用 Chrome 的环境（CI 精简镜像）里 check 应当照样能过。
