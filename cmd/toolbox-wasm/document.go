@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -165,7 +166,7 @@ func (a *wasmApp) renderPage(_ js.Value, args []js.Value) any {
 	}
 	defer func() { _ = reader.Close() }()
 
-	page, err := reader.RenderPage(index, options)
+	page, err := reader.RenderPage(context.Background(), index, options)
 	if err != nil {
 		return errorValue(err)
 	}
@@ -204,7 +205,7 @@ func (a *wasmApp) renderThumbnails(_ js.Value, args []js.Value) any {
 	// 走一遍多余的光栅化，而且放大后的位图边缘发虚。
 	thumbOptions := options
 	thumbOptions.DPI = 36
-	thumbs, err := reader.RenderPages(indices, thumbOptions)
+	thumbs, err := reader.RenderPages(context.Background(), indices, thumbOptions)
 	if err != nil {
 		return errorValue(err)
 	}

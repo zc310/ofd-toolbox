@@ -296,7 +296,7 @@ func (a *wasmApp) convertToPDF(ctx context.Context, plan *convertPlan, job *wasm
 		Background: transparentBackground(),
 		Format:     webreader.RenderFormat("pdf"),
 	}
-	if err := reader.RenderPDFTo(writer, indices, options); err != nil {
+	if err := reader.RenderPDFTo(ctx, writer, indices, options); err != nil {
 		return js.Undefined(), err
 	}
 	if err := writer.finish(); err != nil {
@@ -343,7 +343,7 @@ func (a *wasmApp) convertToImages(ctx context.Context, plan *convertPlan, job *w
 	if len(indices) == 1 {
 		// 单页直出图片文件，不套 ZIP：用户要的是一张图，不是压缩包。
 		job.report(convertProgress{Phase: "rendering", Pages: 1})
-		page, err := reader.RenderPage(indices[0], webreader.RenderOptions{
+		page, err := reader.RenderPage(ctx, indices[0], webreader.RenderOptions{
 			DPI:        plan.dpi,
 			Background: plan.bgColor(),
 			Format:     format,
@@ -373,7 +373,7 @@ func (a *wasmApp) convertToImages(ctx context.Context, plan *convertPlan, job *w
 			return js.Undefined(), err
 		}
 		job.report(convertProgress{Phase: "rendering", Page: position, Pages: len(indices)})
-		page, err := reader.RenderPage(index, webreader.RenderOptions{
+		page, err := reader.RenderPage(ctx, index, webreader.RenderOptions{
 			DPI:        plan.dpi,
 			Background: plan.bgColor(),
 			Format:     format,
