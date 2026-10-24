@@ -38,19 +38,35 @@ type validateOptions struct {
 	maxErrors    int
 }
 
-// validateDocument 校验一个已打开的文档，返回报告。
+// validateDocument 校验已打开文档或原始字节，返回报告。
 func (a *wasmApp) validateDocument(_ js.Value, args []js.Value) any {
 	if len(args) < 1 {
-		return errorValue(errors.New("validateDocument 需要文档 ID"))
+		return errorValue(errors.New("validateDocument 需要文档 ID 或 OFD 字节"))
 	}
-	id := uint64(args[0].Int())
-	data, name, err := a.documentBytes(id)
-	if err != nil {
-		return errorValue(err)
+	var data []byte
+	var name string
+	optionIndex := 1
+	if args[0].Type() == js.TypeNumber {
+		var err error
+		data, name, err = a.documentBytes(uint64(args[0].Int()))
+		if err != nil {
+			return errorValue(err)
+		}
+	} else {
+		var err error
+		data, err = bytesFromJS(args[0], "校验输入")
+		if err != nil {
+			return errorValue(err)
+		}
+		if len(args) < 2 || args[1].Type() != js.TypeString {
+			return errorValue(errors.New("原始字节校验需要文件名"))
+		}
+		name = args[1].String()
+		optionIndex = 2
 	}
 	source := js.Undefined()
-	if len(args) >= 2 {
-		source = args[1]
+	if len(args) > optionIndex {
+		source = args[optionIndex]
 	}
 	options, err := validateOptionsFromJS(source)
 	if err != nil {

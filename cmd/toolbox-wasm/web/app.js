@@ -738,10 +738,19 @@ async function selectFile(id) {
   document.getElementById('result-panel').hidden = true;
 
   if (file.state === 'failed') {
-    state.selectedSource = null;
+    state.selectedSource = sourceOf(file);
     state.doc = null;
     renderFiles();
     renderFormatGrid();
+    renderOptions();
+    renderSourceNote();
+    resetValidatePanel();
+    resetAnalyzePanel();
+    resetInvoicePanel();
+    resetWatermarkPanel();
+    resetMergePanel();
+    resetPreservePanel();
+    refreshCompareInputs();
     return;
   }
 
@@ -2881,7 +2890,10 @@ function renderToolBody() {
 
   // 这几个工具要在 OFD 文档上工作（页面、注解、资源、签名），非 OFD 输入
   // 没有文档句柄。说清楚，而不是把按钮禁用在那里让人猜为什么点不动。
-  if (OFD_ONLY_TABS.has(state.tab) && !state.doc) {
+  const canValidateRawFile = state.tab === 'validate'
+    && state.selectedSource && state.selectedSource.name === 'ofd'
+    && state.files.some((file) => file.id === state.selectedID);
+  if (OFD_ONLY_TABS.has(state.tab) && !state.doc && !canValidateRawFile) {
     host.replaceChildren(note('该工具只支持 OFD 文件。请在左侧选择一个 OFD 文档。'));
     delete host.dataset.built;
     return;
@@ -2932,7 +2944,7 @@ function buildValidatePanel(host) {
   actions.className = 'tool-actions';
   const start = actionButton('开始校验', runValidation);
   start.id = 'validate-start';
-  start.disabled = !state.doc;
+  start.disabled = !state.doc && !(state.selectedSource && state.selectedSource.name === 'ofd');
   actions.append(start);
 
   const details = document.createElement('details');
@@ -3054,7 +3066,7 @@ function resetValidatePanel() {
 
 /** runValidation 执行校验并画报告。 */
 async function runValidation() {
-  if (!state.doc || state.busy) return;
+  if ((!state.doc && (!state.selectedSource || state.selectedSource.name !== 'ofd')) || state.busy) return;
   state.busy = true;
   const host = validateReportHost();
   host.replaceChildren(note('正在校验…'));
@@ -3062,7 +3074,15 @@ async function runValidation() {
 
   const started = performance.now();
   try {
-    const response = await call('validateDocument', state.doc.id, { ...validateOptions });
+    let response;
+    if (state.doc) {
+      response = await call('validateDocument', state.doc.id, { ...validateOptions });
+    } else {
+      const file = state.files.find((item) => item.id === state.selectedID);
+      if (!file) throw new Error('当前文件不存在');
+      response = await call('validateDocument',
+        new Uint8Array(await file.file.arrayBuffer()), file.name, { ...validateOptions });
+    }
     reportID = response.reportId;
     state.results.validate = response.report;
     renderValidation(response.report);
