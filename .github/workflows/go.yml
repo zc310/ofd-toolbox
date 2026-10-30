@@ -39,18 +39,12 @@ jobs:
           cache: true
           cache-dependency-path: ofd-toolbox/go.sum
 
-      # 每次 CI 都解析 ofd 仓库 main 分支的最新提交。升级后保存快照，再跑 tidy
-      # 并核对快照，这样仍能发现依赖清单不整洁，同时允许锁文件正常更新。
+      # 每次 CI 跟随 ofd 主线，升级后整理依赖清单，再执行检查与构建。
+      # go get 可能留下旧校验和，允许 tidy 正常补齐和清理。
       - name: Update OFD dependency
         run: |
           go get github.com/zc310/ofd@main
-          cp go.mod /tmp/go.mod.latest
-          cp go.sum /tmp/go.sum.latest
           go mod tidy
-          diff -u /tmp/go.mod.latest go.mod && diff -u /tmp/go.sum.latest go.sum || {
-            echo "::error::go.mod / go.sum 与 go mod tidy 的结果不一致"
-            exit 1
-          }
 
       # 不用 go build ./... 一步带过：本项目只有 js/wasm 一套实现，
       # cmd/toolbox-wasm 下每个文件都带 //go:build js && wasm，宿主机下匹配不到包。
