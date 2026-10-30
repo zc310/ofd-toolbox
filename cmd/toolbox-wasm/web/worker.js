@@ -65,6 +65,7 @@ const STREAM_COMMANDS = {
   convert: 'startConvert',
   watermark: 'applyWatermark',
   merge: 'mergeDocuments',
+  split: 'splitDocument',
   preserve: 'preserveApply',
   invoicePdf: 'mergeInvoicePDF',
   compare: 'compareDocuments',

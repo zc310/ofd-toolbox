@@ -11,7 +11,7 @@ import (
 	"unicode"
 
 	"github.com/zc310/ofd/pkg/creator"
-	"github.com/zc310/ofd/pkg/watermark"
+	"github.com/zc310/ofd/pkg/creator/watermark"
 	"github.com/zc310/ofd/pkg/webreader"
 )
 

@@ -40,7 +40,7 @@ func (a *wasmApp) compareDocuments(_ js.Value, args []js.Value) any {
 	if err != nil {
 		return errorValue(err)
 	}
-	return a.startCompareStream(args, func(ctx context.Context, job *wasmJob) (js.Value, error) {
+	return a.startOutputStream(args, func(ctx context.Context, job *wasmJob) (js.Value, error) {
 		job.report(convertProgress{Phase: "comparing"})
 		report, err := compare.CompareFiles(ctx, inputs, options)
 		if err != nil {
@@ -137,16 +137,16 @@ func (a *wasmApp) compareExport(_ js.Value, args []js.Value) any {
 	default:
 		return errorValue(fmt.Errorf("不支持的比较报告格式 %q", format))
 	}
-	return a.startCompareStream(args, func(ctx context.Context, job *wasmJob) (js.Value, error) {
+	return a.startOutputStream(args, func(ctx context.Context, job *wasmJob) (js.Value, error) {
 		return writeCompareReport(report, format, id, job)
 	})
 }
 
-// startCompareStream 同时保护异步 goroutine，失败和 panic 均清理任务。
-func (a *wasmApp) startCompareStream(args []js.Value, run func(context.Context, *wasmJob) (js.Value, error)) any {
+// startOutputStream 同时保护异步 goroutine，失败和 panic 均清理任务。
+func (a *wasmApp) startOutputStream(args []js.Value, run func(context.Context, *wasmJob) (js.Value, error)) any {
 	request := args[0]
 	if len(args) < 2 || args[1].Type() != js.TypeFunction {
-		return errorValue(errors.New("比较报告需要产物分块回调"))
+		return errorValue(errors.New("需要产物分块回调"))
 	}
 	id, err := optionalUint64(request, "jobId")
 	if err != nil || id == 0 {
@@ -176,7 +176,7 @@ func (a *wasmApp) startCompareStream(args []js.Value, run func(context.Context, 
 			defer a.finishJob(job)
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					reject.Invoke(fmt.Sprintf("比较报告失败：%v", recovered))
+					reject.Invoke(fmt.Sprintf("产物生成失败：%v", recovered))
 				}
 			}()
 			result, err := run(ctx, job)

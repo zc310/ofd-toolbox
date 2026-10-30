@@ -1115,6 +1115,11 @@ table.report td:nth-child(5) { max-width: 260px; }
 
 .wm-body { display: grid; gap: 14px; }
 
+#split-page-fields { display: grid; gap: 12px; }
+.split-form [hidden] { display: none; }
+.split-form + .tool-actions { margin-top: 16px; }
+#split-result > button { margin-top: 12px; }
+
 .wm-form {
   display: grid;
   gap: 12px;

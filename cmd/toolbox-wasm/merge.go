@@ -8,7 +8,7 @@ import (
 	"syscall/js"
 
 	"github.com/zc310/ofd/pkg/creator"
-	"github.com/zc310/ofd/pkg/merge"
+	"github.com/zc310/ofd/pkg/creator/merge"
 )
 
 // 合并 Tab 的 binding。

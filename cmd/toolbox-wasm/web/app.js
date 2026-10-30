@@ -77,6 +77,7 @@ const state = {
   mergeInputs: [],
   /** mergeResult 是最近一次合并的产物。 */
   mergeResult: null,
+  splitResult: null,
   /** null 默认选入队列内全部 OFD；数组记录用户明确选择的文件 ID。 */
   compareInputs: null,
   compareResult: null,
@@ -646,6 +647,7 @@ async function removeFile(id) {
     state.options = {};
     state.watermarkResult = null;
     state.mergeResult = null;
+    state.splitResult = null;
   }
 
   renderFiles();
@@ -666,6 +668,7 @@ async function removeFile(id) {
       resetInvoicePanel();
       resetWatermarkPanel();
       resetMergePanel();
+      resetSplitPanel();
     }
   } else if (state.tab === 'merge') {
     // 没选中这个文件，但合并面板列着它，重画一次去掉。
@@ -732,6 +735,7 @@ async function selectFile(id) {
   state.watermarkInventory = [];
   state.watermarkResult = null;
   state.mergeResult = null;
+  state.splitResult = null;
   state.preserveResult = null;
   state.preservePlanResult = null;
   for (const key of Object.keys(loadedSections)) delete loadedSections[key];
@@ -749,6 +753,7 @@ async function selectFile(id) {
     resetInvoicePanel();
     resetWatermarkPanel();
     resetMergePanel();
+    resetSplitPanel();
     resetPreservePanel();
     refreshCompareInputs();
     return;
@@ -800,6 +805,7 @@ async function selectFile(id) {
   resetInvoicePanel();
   resetWatermarkPanel();
   resetMergePanel();
+  resetSplitPanel();
   resetPreservePanel();
   refreshCompareInputs();
   // 字体面板开着时同步刷新：它上半部分列的是"当前文档的字体"，
@@ -2882,7 +2888,7 @@ let reportID = 0;
 
 /** renderToolBody 按当前 Tab 画内容。 */
 /** OFD_ONLY_TABS 是必须有 OFD 文档句柄才能工作的工具页。 */
-const OFD_ONLY_TABS = new Set(['validate', 'analyze', 'invoice', 'watermark', 'preserve']);
+const OFD_ONLY_TABS = new Set(['validate', 'analyze', 'invoice', 'watermark', 'preserve', 'split']);
 
 function renderToolBody() {
   const host = document.getElementById(state.tab);
@@ -2900,13 +2906,15 @@ function renderToolBody() {
   }
   if (state.tab === 'validate' || state.tab === 'analyze'
       || state.tab === 'invoice' || state.tab === 'watermark'
-      || state.tab === 'merge' || state.tab === 'preserve' || state.tab === 'compare') {
+      || state.tab === 'merge' || state.tab === 'preserve' || state.tab === 'compare'
+      || state.tab === 'split') {
     const builders = {
       validate: buildValidatePanel,
       analyze: buildAnalyzePanel,
       invoice: buildInvoicePanel,
       watermark: buildWatermarkPanel,
       merge: buildMergePanel,
+      split: buildSplitPanel,
       compare: buildComparePanel,
       preserve: buildPreservePanel,
     };
@@ -5688,6 +5696,126 @@ function downloadMergeResult() {
   const result = state.mergeResult;
   if (!result) return;
   downloadBlob(result.blob, result.name);
+}
+
+// ——— 拆分 Tab ———
+
+function resetSplitPanel() {
+  state.splitResult = null;
+  const host = document.getElementById('split');
+  if (!host) return;
+  delete host.dataset.built;
+  host.replaceChildren(note('载入 OFD 后选择拆分方式。'));
+  if (state.tab === 'split') renderToolBody();
+}
+
+function buildSplitPanel(host) {
+  host.replaceChildren();
+  host.dataset.built = '1';
+  const form = document.createElement('div');
+  form.className = 'wm-form split-form';
+  form.append(selectField('split-mode', '拆分方式', [
+    { value: 'every', label: '每 N 页一份' },
+    { value: 'groups', label: '按页码分组' },
+    { value: 'document', label: '按完整文档体' },
+  ], 'every'));
+  const pages = document.createElement('div');
+  pages.id = 'split-page-fields';
+  pages.append(
+    numberField('split-document', '文档体序号（从 1 开始）', 1, 1, 10000),
+    note('页面拆分针对指定文档体；普通 OFD 填 1，多文档体 OFD 请填写对应序号。'),
+  );
+  const every = numberField('split-every', '每份页数', 1, 1, 100000);
+  every.id = 'split-every-field';
+  const groups = textField('split-groups', '页码分组（如 1-3;4-8;10）', '');
+  groups.id = 'split-groups-field';
+  pages.append(every, groups,
+    note('页码从 1 开始；分号分隔输出文件，逗号组合页码，如 1,3;2,4。组间可重叠，未选页面不输出。'),
+    checkboxField('split-attachments', '复制文档附件到每份结果'),
+    note('按页面拆分会移除签名、版本、自定义标引和扩展；文档附件默认移除。'),
+  );
+  const whole = selectField('split-signatures', '文档体签名', [
+    { value: 'preserve', label: '保留原始签名字节（需另行验签）' },
+    { value: 'drop', label: '移除签名' },
+  ], 'preserve');
+  whole.id = 'split-document-fields';
+  form.append(pages, whole,
+    checkboxField('split-integrity', '移除原完整性清单（存在清单时必须勾选才能拆分）'),
+    note('最多生成 1000 份 OFD，统一打包为一个 ZIP；解压后可分别打开。'),
+  );
+  form.addEventListener('change', syncSplitFields);
+  const actions = document.createElement('div');
+  actions.className = 'tool-actions';
+  const start = actionButton('开始拆分', runSplit);
+  start.id = 'split-start';
+  actions.append(start);
+  const result = document.createElement('div');
+  result.id = 'split-result';
+  host.append(form, actions, result);
+  syncSplitFields();
+}
+
+function syncSplitFields() {
+  const mode = document.getElementById('wm-split-mode')?.value || 'every';
+  for (const [id, visible] of [
+    ['split-page-fields', mode !== 'document'],
+    ['split-every-field', mode === 'every'],
+    ['split-groups-field', mode === 'groups'],
+    ['split-document-fields', mode === 'document'],
+  ]) {
+    const node = document.getElementById(id);
+    if (node) node.hidden = !visible;
+  }
+  const start = document.getElementById('split-start');
+  if (start) start.disabled = !state.doc || state.busy;
+}
+
+async function runSplit() {
+  if (!state.doc || state.busy) return;
+  const host = document.getElementById('split-result');
+  state.splitResult = null;
+  host.replaceChildren();
+  state.busy = true;
+  syncSplitFields();
+  setTask('拆分中', 0, true);
+  try {
+    const result = await convert({
+      command: 'split', documentId: state.doc.id,
+      mode: document.getElementById('wm-split-mode').value,
+      document: Number(document.getElementById('wm-split-document').value),
+      every: Number(document.getElementById('wm-split-every').value),
+      groups: document.getElementById('wm-split-groups').value,
+      keepAttachments: document.getElementById('wm-split-attachments').checked,
+      dropIntegrity: document.getElementById('wm-split-integrity').checked,
+      signatures: document.getElementById('wm-split-signatures').value,
+    }, (progress) => {
+      if (progress.pages) setTask(`拆分 ${progress.page}/${progress.pages}`,
+        Math.round(100 * (progress.page - 1) / progress.pages), true);
+    });
+    state.splitResult = result;
+    host.append(note(`已生成 ${result.parts.length} 份 OFD · ${formatBytes(result.size)}`));
+    host.append(simpleTable(['文件', '文档体', '页码', '大小', '内容处理'], result.parts.map((part) => [
+      part.name, part.document, (part.pages || []).join(', ') || '完整文档体', formatBytes(part.size),
+      [
+        ...(part.dropped || []),
+        ...(part.droppedSignatures || []).map((name) => `移除签名：${name}`),
+        ...(part.signatures || []).map((name) => `保留签名字节（需验签）：${name}`),
+      ].join('；') || '无内容移除',
+    ])));
+    const download = actionButton('下载 ZIP', () => {
+      if (state.splitResult) downloadBlob(state.splitResult.blob, state.splitResult.name);
+    });
+    download.id = 'split-download';
+    host.append(download);
+    finishTask('完成');
+  } catch (error) {
+    const message = error.code === 'cancelled' ? '已取消拆分' : `拆分失败：${error.message}`;
+    host.replaceChildren(note(message));
+    finishTask(message);
+  } finally {
+    state.busy = false;
+    syncSplitFields();
+  }
 }
 
 /** loadMergeResult 把合并产物载入文件队列。 */

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall/js"
 
-	"github.com/zc310/ofd/pkg/preserve"
+	"github.com/zc310/ofd/pkg/archive/preserve"
 )
 
 // 长期保存 Tab 的 binding。

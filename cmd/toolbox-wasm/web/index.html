@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OFD 工具箱</title>
-<meta name="description" content="在浏览器里转换与检查 OFD 文档：OFD 与 PDF 互转、格式导出、文档校验、结构分析、多文件比较、发票抽取、水印、合并与长期保存。全部在本地完成，文件不上传。">
+<meta name="description" content="在浏览器里转换与检查 OFD 文档：OFD 与 PDF 互转、格式导出、文档校验、结构分析、多文件比较、发票抽取、水印、合并、拆分与长期保存。全部在本地完成，文件不上传。">
 <link rel="stylesheet" href="toolbox.css">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#2476bd">
@@ -45,6 +45,7 @@
     <button class="tab" role="tab" data-tab="invoice" aria-selected="false">发票</button>
     <button class="tab" role="tab" data-tab="watermark" aria-selected="false">水印</button>
     <button class="tab" role="tab" data-tab="merge" aria-selected="false">合并</button>
+    <button class="tab" role="tab" data-tab="split" aria-selected="false">拆分</button>
     <button class="tab" role="tab" data-tab="preserve" aria-selected="false">长期保存</button>
   </nav>
   <div class="topbar-tail">
@@ -158,6 +159,17 @@
       </div>
       <div id="merge" class="tool-body">
         <p class="hint">把两个以上 OFD 加入文件队列后点击「开始合并」。</p>
+      </div>
+    </div>
+
+    <!-- 拆分 -->
+    <div class="panel" data-panel="split">
+      <div class="work-head">
+        <h2>文档拆分</h2>
+        <p class="work-note">按页数、页码分组或完整文档体拆分，生成的 OFD 统一打包为 ZIP 下载。</p>
+      </div>
+      <div id="split" class="tool-body">
+        <p class="hint">载入 OFD 后选择拆分方式。</p>
       </div>
     </div>
 

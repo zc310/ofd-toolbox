@@ -112,6 +112,7 @@ func main() {
 
 	// 合并。同样是"读入多个文档、产出整个 OFD"，复用同一条流式通道。
 	expose("mergeDocuments", app.mergeDocuments)
+	expose("splitDocument", app.splitDocument)
 
 	expose("compareDocuments", app.compareDocuments)
 	expose("compareExport", app.compareExport)
