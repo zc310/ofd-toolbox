@@ -2,7 +2,7 @@ module github.com/zc310/ofd-toolbox
 
 go 1.26.0
 
-require github.com/zc310/ofd v0.1.7
+require github.com/zc310/ofd v0.1.8-0.20261031032707-a15757d0d970
 
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0 // indirect

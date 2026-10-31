@@ -3,13 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"syscall/js"
 
-	"github.com/zc310/ofd/pkg/webreader"
+	webreader "github.com/zc310/ofd/pkg/reader"
 )
 
 // documentHandle 是一个已打开文档的运行时状态。
@@ -166,11 +167,11 @@ func (a *wasmApp) renderPage(_ js.Value, args []js.Value) any {
 	}
 	defer func() { _ = reader.Close() }()
 
-	page, err := reader.RenderPage(context.Background(), index, options)
-	if err != nil {
+	var page bytes.Buffer
+	if err := reader.RenderPage(context.Background(), &page, index, options); err != nil {
 		return errorValue(err)
 	}
-	return objectValue(map[string]any{"data": page, "page": index})
+	return objectValue(map[string]any{"data": page.Bytes(), "page": index})
 }
 
 // renderThumbnails 批量渲染低分辨率缩略图。
@@ -205,13 +206,15 @@ func (a *wasmApp) renderThumbnails(_ js.Value, args []js.Value) any {
 	// 走一遍多余的光栅化，而且放大后的位图边缘发虚。
 	thumbOptions := options
 	thumbOptions.DPI = 36
-	thumbs, err := reader.RenderPages(context.Background(), indices, thumbOptions)
+	items := make([]any, len(indices))
+	err = reader.RenderPages(context.Background(), indices, thumbOptions,
+		func(_ context.Context, position, pageIndex int, data []byte) error {
+			// 回调返回后上游会复用缓冲区，跨调用保留时必须复制。
+			items[position] = map[string]any{"data": bytes.Clone(data), "page": pageIndex}
+			return nil
+		})
 	if err != nil {
 		return errorValue(err)
-	}
-	items := make([]any, len(thumbs))
-	for index, thumb := range thumbs {
-		items[index] = map[string]any{"data": thumb, "page": indices[index]}
 	}
 	return objectValue(map[string]any{"thumbs": items})
 }

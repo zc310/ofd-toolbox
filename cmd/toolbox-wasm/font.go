@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall/js"
 
-	"github.com/zc310/ofd/pkg/webreader"
+	webreader "github.com/zc310/ofd/pkg/reader"
 )
 
 // fontEntry 是已注册的回退字体。

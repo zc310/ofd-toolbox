@@ -12,7 +12,7 @@ import (
 	"syscall/js"
 
 	"github.com/zc310/ofd/pkg/invoice"
-	"github.com/zc310/ofd/pkg/webreader"
+	webreader "github.com/zc310/ofd/pkg/reader"
 )
 
 // 发票 Tab 的 binding。

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/zc310/ofd/pkg/converter"
-	"github.com/zc310/ofd/pkg/webreader"
+	webreader "github.com/zc310/ofd/pkg/reader"
 )
 
 // wasmJob 是一次进行中的转换。
@@ -296,7 +296,7 @@ func (a *wasmApp) convertToPDF(ctx context.Context, plan *convertPlan, job *wasm
 		Background: transparentBackground(),
 		Format:     webreader.RenderFormat("pdf"),
 	}
-	if err := reader.RenderPDFTo(ctx, writer, indices, options); err != nil {
+	if err := reader.RenderPDF(ctx, writer, indices, options); err != nil {
 		return js.Undefined(), err
 	}
 	if err := writer.finish(); err != nil {
@@ -343,15 +343,12 @@ func (a *wasmApp) convertToImages(ctx context.Context, plan *convertPlan, job *w
 	if len(indices) == 1 {
 		// 单页直出图片文件，不套 ZIP：用户要的是一张图，不是压缩包。
 		job.report(convertProgress{Phase: "rendering", Pages: 1})
-		page, err := reader.RenderPage(ctx, indices[0], webreader.RenderOptions{
+		err := reader.RenderPage(ctx, writer, indices[0], webreader.RenderOptions{
 			DPI:        plan.dpi,
 			Background: plan.bgColor(),
 			Format:     format,
 		})
 		if err != nil {
-			return js.Undefined(), err
-		}
-		if _, err := writer.Write(page); err != nil {
 			return js.Undefined(), err
 		}
 		if err := writer.finish(); err != nil {
@@ -373,14 +370,6 @@ func (a *wasmApp) convertToImages(ctx context.Context, plan *convertPlan, job *w
 			return js.Undefined(), err
 		}
 		job.report(convertProgress{Phase: "rendering", Page: position, Pages: len(indices)})
-		page, err := reader.RenderPage(ctx, index, webreader.RenderOptions{
-			DPI:        plan.dpi,
-			Background: plan.bgColor(),
-			Format:     format,
-		})
-		if err != nil {
-			return js.Undefined(), fmt.Errorf("渲染第 %d 页失败: %w", index+1, err)
-		}
 		// 固定时间戳让同样输入得到同样字节，便于比对与缓存。
 		entry, err := archive.CreateHeader(&zip.FileHeader{
 			Name:     fmt.Sprintf("page-%04d.%s", index+1, extension),
@@ -390,8 +379,10 @@ func (a *wasmApp) convertToImages(ctx context.Context, plan *convertPlan, job *w
 		if err != nil {
 			return js.Undefined(), err
 		}
-		if _, err := entry.Write(page); err != nil {
-			return js.Undefined(), err
+		if err := reader.RenderPage(ctx, entry, index, webreader.RenderOptions{
+			DPI: plan.dpi, Background: plan.bgColor(), Format: format,
+		}); err != nil {
+			return js.Undefined(), fmt.Errorf("渲染第 %d 页失败: %w", index+1, err)
 		}
 	}
 	// Central Directory 在最后写出，因此必须在全部页面渲染完之前不 flush。

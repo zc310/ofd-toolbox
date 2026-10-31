@@ -12,7 +12,7 @@ import (
 
 	"github.com/zc310/ofd/pkg/creator"
 	"github.com/zc310/ofd/pkg/creator/watermark"
-	"github.com/zc310/ofd/pkg/webreader"
+	webreader "github.com/zc310/ofd/pkg/reader"
 )
 
 // 水印 Tab 的 binding。
